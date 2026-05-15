@@ -27,4 +27,13 @@ ON CONFLICT (handle_id) DO UPDATE SET
     END,
     processed_by_subgraph = handles.processed_by_subgraph OR EXCLUDED.processed_by_subgraph,
     processed_by_s3       = handles.processed_by_s3       OR EXCLUDED.processed_by_s3,
-    processed_by_nats     = handles.processed_by_nats     OR EXCLUDED.processed_by_nats;
+    processed_by_nats     = handles.processed_by_nats     OR EXCLUDED.processed_by_nats
+-- Skip the UPDATE entirely when the incoming row brings no new information.
+-- Avoids unnecessary Write-Ahead Log writes and row locks under heavy retry
+-- traffic (NATS redeliveries, S3 polling, subgraph re-syncs).
+WHERE
+       (handles.resolved_at    IS NULL AND EXCLUDED.resolved_at    IS NOT NULL)
+    OR (handles.parent_handles = '{}'  AND EXCLUDED.parent_handles <> '{}')
+    OR (NOT handles.processed_by_subgraph AND EXCLUDED.processed_by_subgraph)
+    OR (NOT handles.processed_by_s3       AND EXCLUDED.processed_by_s3)
+    OR (NOT handles.processed_by_nats     AND EXCLUDED.processed_by_nats);
