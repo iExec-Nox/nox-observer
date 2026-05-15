@@ -4,8 +4,8 @@ services:
     container_name: nox-observer-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-nox}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nox}
+      POSTGRES_USER: ${POSTGRES_USER:-nox_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nox_password}
       POSTGRES_DB: ${POSTGRES_DB:-nox_observer}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
@@ -13,7 +13,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nox} -d ${POSTGRES_DB:-nox_observer}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nox_user} -d ${POSTGRES_DB:-nox_observer}"]
       interval: 5s
       timeout: 5s
       retries: 10
