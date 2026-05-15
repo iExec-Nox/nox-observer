@@ -37,11 +37,3 @@ Suggested clients:
 | [TablePlus](https://tableplus.com/) | macOS / Linux / Windows | Polished UI, free tier |
 | [Postico](https://eggerapps.at/postico2/) | macOS | Native macOS app |
 | [pgAdmin](https://www.pgadmin.org/) | Web / desktop | Official Postgres GUI
-
-## Layout
-
-| Path | Description |
-| --- | --- |
-| `sql/schema.sql` | Initial schema for the `handles` table |
-| `sql/upsert_handle.sql` | Canonical upsert pattern used by the three writers (NATS, S3, subgraph) |
-| `docker-compose.yml` | Local Postgres for development |
