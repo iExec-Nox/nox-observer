@@ -1,8 +1,3 @@
--- Initial schema for nox-observer. A single `handles` table aggregates
--- signals from the three independent sources (NATS JetStream, S3,
--- subgraph) into one row per handle. It is the source of truth queried by
--- the API and by operators when debugging a stuck handle.
-
 CREATE TABLE handles (
     handle_id             TEXT        PRIMARY KEY,                  -- 0x... (66 chars)
     chain_id              INTEGER     NOT NULL,
