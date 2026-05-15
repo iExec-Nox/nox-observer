@@ -36,7 +36,7 @@ Suggested clients:
 | [DBeaver](https://dbeaver.io/) | macOS / Linux / Windows | Free, full-featured |
 | [TablePlus](https://tableplus.com/) | macOS / Linux / Windows | Polished UI, free tier |
 | [Postico](https://eggerapps.at/postico2/) | macOS | Native macOS app |
-| [pgAdmin](https://www.pgadmin.org/) | Web / desktop | Official Postgres GUI
+| [pgAdmin](https://www.pgadmin.org/) | Web / desktop | Official Postgres GUI |
 
 ## Layout
 
