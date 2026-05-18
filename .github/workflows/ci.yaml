@@ -10,7 +10,7 @@ jobs:
   build-and-test:
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/rust-build.yml@rust-build-v2.1.0
     with:
-      rust-version: '1.94.0'
+      rust-version: '1.95.0'
       working-directory: "."
       enable-cache: true
       publish-crates-io: false
@@ -40,11 +40,11 @@ jobs:
 
           if [ "${{ github.ref_name }}" = "main" ] ; then
             echo "Processing main branch"
-            echo "image_tag=dev-${SHORT_SHA}" | tee -a $GITHUB_OUTPUT
+            echo "image_tag=dev-${SHORT_SHA}" >> $GITHUB_OUTPUT
           else
             # This covers feat/ and fix/ branches
-            echo "Processing feat/fix branch $GIT_BRANCH"
-            echo "image_tag=feature-${SHORT_SHA}" | tee -a $GITHUB_OUTPUT
+            echo "Processing $GIT_BRANCH branch"
+            echo "image_tag=feature-${SHORT_SHA}" >> $GITHUB_OUTPUT
           fi
 
   build-oci-image:
