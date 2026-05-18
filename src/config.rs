@@ -27,7 +27,9 @@ impl Config {
                     .prefix_separator("_")
                     .separator("__"),
             )
-            // Load secrets from files (NOX_OBSERVER_*_FILE -> reads file content)
+            // Load structured config sections from files referenced by
+            // NOX_OBSERVER_<section>_FILE env vars (e.g. NOX_OBSERVER_DATABASE_FILE=/run/secrets/db.toml).
+            // The file is parsed as TOML/JSON/YAML by extension and its keys merge under the matching section.
             .add_source(EnvironmentSecretFile::with_prefix("NOX_OBSERVER").separator("_"))
             .build()?;
 
@@ -69,5 +71,27 @@ mod tests {
                 assert_eq!(8080, config.server.port);
             },
         );
+    }
+
+    #[test]
+    fn load_returns_file_values_when_secret_file_env_var_set() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp = std::env::temp_dir().join(format!("nox_observer_secret_{unique}.toml"));
+        std::fs::write(&tmp, "host = \"10.0.0.5\"\nport = 9090\n").expect("write tempfile");
+
+        temp_env::with_vars(
+            [("NOX_OBSERVER_SERVER_FILE", Some(tmp.to_str().unwrap()))],
+            || {
+                let config = Config::load().expect("should load");
+                config.validate().expect("should validate");
+                assert_eq!("10.0.0.5", config.server.host);
+                assert_eq!(9090, config.server.port);
+            },
+        );
+
+        std::fs::remove_file(&tmp).ok();
     }
 }
