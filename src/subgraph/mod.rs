@@ -10,7 +10,7 @@ type BigInt = String;
 #[graphql(
     schema_path = "generated/subgraph/schema.json",
     query_path = "src/subgraph/queries.graphql",
-    response_derives = "Debug, Clone",
+    response_derives = "Debug, Clone"
 )]
 pub struct HandlesQuery;
 
@@ -18,7 +18,7 @@ pub struct HandlesQuery;
 #[graphql(
     schema_path = "generated/subgraph/schema.json",
     query_path = "src/subgraph/queries.graphql",
-    response_derives = "Debug, Clone",
+    response_derives = "Debug, Clone"
 )]
 pub struct HandleRolesQuery;
 
@@ -41,8 +41,7 @@ impl SubgraphClient {
         first: i64,
     ) -> Result<handles_query::ResponseData> {
         let variables = handles_query::Variables { first, last_block };
-        let response =
-            post_graphql::<HandlesQuery, _>(&self.http, &self.url, variables).await?;
+        let response = post_graphql::<HandlesQuery, _>(&self.http, &self.url, variables).await?;
 
         if let Some(errors) = response.errors
             && !errors.is_empty()
@@ -81,8 +80,8 @@ mod tests {
 
     #[test]
     fn new_builds_client_with_timeout() {
-        let client = SubgraphClient::new("https://example.com".to_string())
-            .expect("should build client");
+        let client =
+            SubgraphClient::new("https://example.com".to_string()).expect("should build client");
         assert_eq!(client.url, "https://example.com");
     }
 }
