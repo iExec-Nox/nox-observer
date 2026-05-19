@@ -9,8 +9,6 @@ jobs:
   prepare:
     name: Determine image tag
     runs-on: ubuntu-latest
-    # Prevent execution on forks
-    if: github.repository_owner == 'iExec-Nox'
     outputs:
       image_tag: ${{ steps.determine-tag.outputs.image_tag }}
     steps:
