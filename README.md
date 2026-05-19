@@ -35,7 +35,9 @@ Prefer another client? Point any Postgres GUI at the `DATABASE_URL` from your `.
 
 ## Subgraph schema
 
-The file `src/subgraph/schema.json` is the introspected schema of the upstream subgraph. The `graphql_client` derive macro reads it **at compile time** and generates Rust types for the queries in `src/subgraph/queries.graphql`.
+The file `generated/subgraph/schema.json` is the introspected schema of the upstream subgraph. The `graphql_client` derive macro reads it **at compile time** and generates Rust types for the queries in `src/subgraph/queries.graphql`.
+
+> Despite the `generated/` folder name, this file **is committed** to Git. The folder name only reflects that the file is produced by a tool, not hand-written. See the rationale below.
 
 ### When to regenerate
 
@@ -49,7 +51,7 @@ cargo install graphql_client_cli
 
 graphql-client introspect-schema \
   https://thegraph.arbitrum-sepolia-testnet.noxprotocol.io/api/subgraphs/id/BjQAX2HpmsSAzURJimKDhjZZnkSJtaczA8RPumggrStb \
-  --output src/subgraph/schema.json
+  --output generated/subgraph/schema.json
 ```
 
 After regenerating:

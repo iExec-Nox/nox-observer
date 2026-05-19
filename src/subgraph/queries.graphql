@@ -1,0 +1,38 @@
+# Fetch a page of handles whose blockNumber is strictly greater than the cursor.
+# Ordered by blockNumber ascending so the caller can advance its cursor reliably.
+query HandlesQuery($first: Int!, $last_block: BigInt!) {
+  handles(
+    first: $first
+    orderBy: blockNumber
+    orderDirection: asc
+    where: { blockNumber_gt: $last_block }
+  ) {
+    id
+    operator
+    blockNumber
+    blockTimestamp
+    transactionHash
+    parentHandles {
+      id
+    }
+  }
+}
+
+# Fetch the ADMIN HandleRoles for the given handle ids.
+# Used to derive the on-chain `caller` (the address that created each handle).
+# Ordered by blockNumber ascending so the first ADMIN row per handle = the creator.
+query HandleRolesQuery($handle_ids: [Bytes!]!) {
+  handleRoles(
+    first: 1000
+    orderBy: blockNumber
+    orderDirection: asc
+    where: { handle_in: $handle_ids, role: ADMIN }
+  ) {
+    id
+    handle {
+      id
+    }
+    grantedBy
+    blockNumber
+  }
+}
