@@ -8,12 +8,35 @@ use validator::Validate;
 pub struct Config {
     #[validate(nested)]
     pub server: ServerConfig,
+    pub subgraph: SubgraphConfig,
+    #[validate(nested)]
+    pub database: DatabaseConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+}
+
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct SubgraphConfig {
+    #[validate(length(min = 1))]
+    pub url: String,
+    #[validate(range(min = 1))]
+    pub chain_id: u64,
+    #[validate(range(min = 1, max = 3600))]
+    pub poll_interval_seconds: u64,
+    #[validate(range(min = 1, max = 1000))]
+    pub batch_size: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct DatabaseConfig {
+    #[validate(length(min = 1))]
+    pub url: String,
+    #[validate(range(min = 1, max = 100))]
+    pub max_connections: u32,
 }
 
 impl Config {
