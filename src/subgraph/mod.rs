@@ -45,7 +45,6 @@ impl SubgraphClient {
             .data
             .ok_or_else(|| anyhow!("subgraph returned no data for HandlesQuery"))
     }
-
 }
 
 #[cfg(test)]

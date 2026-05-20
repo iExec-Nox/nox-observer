@@ -2,7 +2,7 @@ CREATE TABLE handles (
     handle_id             TEXT        PRIMARY KEY,                  -- 0x... (66 chars)
     chain_id              INT         NOT NULL,
     operator              TEXT        NOT NULL,                     -- 'add', 'mul', 'transfer', ...
-    caller                TEXT        NOT NULL,
+    caller                TEXT        NULL,                          -- filled by nats_consumer, may be NULL when subgraph_syncer inserts first
     tx_hash               TEXT        NOT NULL,
     block_timestamp       TIMESTAMPTZ NOT NULL,
     block_number          BIGINT      NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE handles (
 
     CONSTRAINT handle_id_format        CHECK (handle_id ~ '^0x[a-fA-F0-9]{64}$'),
     CONSTRAINT tx_hash_format          CHECK (tx_hash   ~ '^0x[a-fA-F0-9]{64}$'),
-    CONSTRAINT caller_format           CHECK (caller    ~ '^0x[a-fA-F0-9]{40}$'),
+    CONSTRAINT caller_format           CHECK (caller IS NULL OR caller ~ '^0x[a-fA-F0-9]{40}$'),
     CONSTRAINT chain_id_positive       CHECK (chain_id      > 0),
     CONSTRAINT block_number_positive   CHECK (block_number >= 0),
     CONSTRAINT resolved_after_emission CHECK (resolved_at IS NULL OR resolved_at >= block_timestamp)

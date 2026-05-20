@@ -23,6 +23,7 @@ INSERT INTO handles (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 ON CONFLICT (handle_id) DO UPDATE SET
+    caller      = COALESCE(handles.caller,      EXCLUDED.caller),
     resolved_at = COALESCE(handles.resolved_at, EXCLUDED.resolved_at),
     processed_by_subgraph = handles.processed_by_subgraph OR EXCLUDED.processed_by_subgraph,
     processed_by_s3       = handles.processed_by_s3       OR EXCLUDED.processed_by_s3,
@@ -31,7 +32,8 @@ ON CONFLICT (handle_id) DO UPDATE SET
 -- Avoids unnecessary Write-Ahead Log writes and row locks under heavy retry
 -- traffic (NATS redeliveries, S3 polling, subgraph re-syncs).
 WHERE
-       (handles.resolved_at    IS NULL AND EXCLUDED.resolved_at    IS NOT NULL)
+       (handles.caller         IS NULL AND EXCLUDED.caller         IS NOT NULL)
+    OR (handles.resolved_at    IS NULL AND EXCLUDED.resolved_at    IS NOT NULL)
     OR (NOT handles.processed_by_subgraph AND EXCLUDED.processed_by_subgraph)
     OR (NOT handles.processed_by_s3       AND EXCLUDED.processed_by_s3)
     OR (NOT handles.processed_by_nats     AND EXCLUDED.processed_by_nats);
