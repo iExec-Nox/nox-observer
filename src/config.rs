@@ -22,7 +22,7 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct SubgraphConfig {
-    #[validate(length(min = 1))]
+    #[validate(url)]
     pub url: String,
     #[validate(range(min = 1))]
     pub chain_id: u64,
@@ -34,7 +34,7 @@ pub struct SubgraphConfig {
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct DatabaseConfig {
-    #[validate(length(min = 1))]
+    #[validate(url)]
     pub url: String,
     #[validate(range(min = 1, max = 100))]
     pub max_connections: u32,
