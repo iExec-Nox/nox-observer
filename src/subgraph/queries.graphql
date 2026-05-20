@@ -18,21 +18,3 @@ query HandlesQuery($first: Int!, $last_block: BigInt!) {
   }
 }
 
-# Fetch the ADMIN HandleRoles for the given handle ids.
-# Used to derive the on-chain `caller` (the address that created each handle).
-# Ordered by blockNumber ascending so the first ADMIN row per handle = the creator.
-query HandleRolesQuery($handle_ids: [Bytes!]!) {
-  handleRoles(
-    first: 1000
-    orderBy: blockNumber
-    orderDirection: asc
-    where: { handle_in: $handle_ids, role: ADMIN }
-  ) {
-    id
-    handle {
-      id
-    }
-    grantedBy
-    blockNumber
-  }
-}

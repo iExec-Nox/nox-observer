@@ -1,0 +1,7 @@
+# Mark generated artifacts so GitHub collapses them in diffs and excludes them
+# from language statistics. The files themselves remain tracked (we commit them
+# for reproducible builds), this only changes how the GitHub UI presents them.
+# See: https://docs.github.com/en/repositories/working-with-files/managing-files/customizing-how-changed-files-appear-on-github
+
+generated/** linguist-generated=true
+Cargo.lock  linguist-generated=true

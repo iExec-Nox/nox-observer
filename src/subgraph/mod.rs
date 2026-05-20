@@ -14,14 +14,6 @@ type BigInt = String;
 )]
 pub struct HandlesQuery;
 
-#[derive(GraphQLQuery)]
-#[graphql(
-    schema_path = "generated/subgraph/schema.json",
-    query_path = "src/subgraph/queries.graphql",
-    response_derives = "Debug, Clone"
-)]
-pub struct HandleRolesQuery;
-
 pub struct SubgraphClient {
     http: reqwest::Client,
     url: String,
@@ -54,24 +46,6 @@ impl SubgraphClient {
             .ok_or_else(|| anyhow!("subgraph returned no data for HandlesQuery"))
     }
 
-    pub async fn fetch_handle_roles(
-        &self,
-        handle_ids: Vec<Bytes>,
-    ) -> Result<handle_roles_query::ResponseData> {
-        let variables = handle_roles_query::Variables { handle_ids };
-        let response =
-            post_graphql::<HandleRolesQuery, _>(&self.http, &self.url, variables).await?;
-
-        if let Some(errors) = response.errors
-            && !errors.is_empty()
-        {
-            bail!("subgraph returned errors: {errors:?}");
-        }
-
-        response
-            .data
-            .ok_or_else(|| anyhow!("subgraph returned no data for HandleRolesQuery"))
-    }
 }
 
 #[cfg(test)]
