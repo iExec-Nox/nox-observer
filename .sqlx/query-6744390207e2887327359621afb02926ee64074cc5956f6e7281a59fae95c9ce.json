@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Idempotent insert of a parent-child edge, used by subgraph_syncer.\n-- The parent row in `handles` must exist beforehand (foreign key enforced);\n-- callers should upsert the parent handle first, then call this for each edge.\n\nINSERT INTO handle_parents (child_handle_id, parent_handle_id)\nVALUES ($1, $2)\nON CONFLICT (child_handle_id, parent_handle_id) DO NOTHING;\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6744390207e2887327359621afb02926ee64074cc5956f6e7281a59fae95c9ce"
+}
