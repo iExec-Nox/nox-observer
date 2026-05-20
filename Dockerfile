@@ -8,6 +8,8 @@ RUN apk add --no-cache openssl-dev=3.5.6-r0 openssl-libs-static=3.5.6-r0
 # Copy manifest and source files
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+# Required at compile time by the graphql_client derive macro
+COPY generated ./generated
 
 # Build the application
 RUN cargo build --release
