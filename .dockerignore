@@ -5,6 +5,7 @@
 target
 
 *.json
+!generated/**/*.json
 *.md
 
 docker-compose.yml
