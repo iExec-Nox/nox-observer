@@ -4,4 +4,5 @@
 # See: https://docs.github.com/en/repositories/working-with-files/managing-files/customizing-how-changed-files-appear-on-github
 
 generated/** linguist-generated=true
-Cargo.lock  linguist-generated=true
+.sqlx/**     linguist-generated=true
+Cargo.lock   linguist-generated=true

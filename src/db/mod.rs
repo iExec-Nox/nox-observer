@@ -6,7 +6,7 @@ pub struct NewHandle {
     pub handle_id: String,
     pub chain_id: i32,
     pub operator: String,
-    pub caller: String,
+    pub caller: Option<String>,
     pub tx_hash: String,
     pub block_timestamp: DateTime<Utc>,
     pub block_number: i64,

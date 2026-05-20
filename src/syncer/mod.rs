@@ -1,13 +1,12 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
-use crate::db::{NewHandle, Repository};
-use crate::subgraph::{SubgraphClient, handle_roles_query, handles_query};
+use crate::db::Repository;
+use crate::subgraph::SubgraphClient;
 
 pub struct Syncer {
     subgraph: SubgraphClient,
@@ -57,37 +56,29 @@ impl Syncer {
         //   let data = self.subgraph.fetch_handles(self.last_block.to_string(), self.batch_size).await?;
         //   If data.handles is empty, return Ok(0).
 
-        // TODO 2 — collect their ids (Vec<String>):
-        //   let ids: Vec<String> = data.handles.iter().map(|h| h.id.clone()).collect();
-
-        // TODO 3 — fetch the ADMIN roles to derive caller:
-        //   let roles_data = self.subgraph.fetch_handle_roles(ids).await?;
-        //   let caller_by_handle = build_caller_map(&roles_data);
-
-        // TODO 4 — process each handle:
+        // TODO 2 — process each handle:
         //   For each h in &data.handles:
-        //     - look up caller in caller_by_handle. If missing, warn! and continue (skip).
         //     - parse block_number / block_timestamp.
-        //     - build NewHandle with chain_id = self.chain_id, processed_by_subgraph = true, others = false / None.
+        //     - build NewHandle with:
+        //         chain_id = self.chain_id,
+        //         caller   = None,                    // filled later by nats_consumer
+        //         resolved_at = None,
+        //         processed_by_subgraph = true,
+        //         processed_by_s3 = false,
+        //         processed_by_nats = false.
         //     - self.repo.upsert_handle(&new).await?
         //     - for each p in &h.parent_handles: self.repo.upsert_handle_parent(&h.id, &p.id).await?
+        //     - increment a `processed` counter.
 
-        // TODO 5 — advance the cursor:
+        // TODO 3 — advance the cursor:
         //   self.last_block = data.handles.iter()
         //       .map(|h| parse_block_number(&h.block_number).unwrap_or(self.last_block))
         //       .max()
         //       .unwrap_or(self.last_block);
 
-        // TODO 6 — return Ok(processed_count) where processed_count counts only handles that were actually upserted (caller found).
+        // TODO 4 — return Ok(processed_count).
         todo!()
     }
-}
-
-fn build_caller_map(_data: &handle_roles_query::ResponseData) -> HashMap<String, String> {
-    // TODO: iterate over data.handle_roles, and for each role keep the FIRST grantedBy seen
-    //       per handle id (roles are sorted by blockNumber asc, so first = creator).
-    //       Use HashMap::entry(role.handle.id.clone()).or_insert_with(|| role.granted_by.clone()).
-    todo!()
 }
 
 fn parse_block_number(s: &str) -> Result<i64> {
