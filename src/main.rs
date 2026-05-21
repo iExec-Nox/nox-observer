@@ -4,7 +4,6 @@ pub mod db;
 pub mod errors;
 pub mod handlers;
 pub mod subgraph;
-pub mod syncer;
 
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

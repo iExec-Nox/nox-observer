@@ -5,10 +5,10 @@ use chrono::{DateTime, Utc};
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{error, info};
 
+use super::client::SubgraphClient;
 use crate::db::Repository;
-use crate::subgraph::SubgraphClient;
 
-pub struct Syncer {
+pub struct Poller {
     subgraph: SubgraphClient,
     repo: Repository,
     chain_id: i32,
@@ -17,7 +17,7 @@ pub struct Syncer {
     last_block: i64,
 }
 
-impl Syncer {
+impl Poller {
     pub fn new(
         subgraph: SubgraphClient,
         repo: Repository,
@@ -39,19 +39,19 @@ impl Syncer {
         let mut ticker = interval(self.poll_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-        info!("syncer started; poll_interval={:?}", self.poll_interval);
+        info!("poller started; poll_interval={:?}", self.poll_interval);
 
         loop {
             ticker.tick().await;
-            match self.sync_once().await {
-                Ok(n) if n > 0 => info!("synced {n} handles (last_block={})", self.last_block),
+            match self.poll_once().await {
+                Ok(n) if n > 0 => info!("polled {n} handles (last_block={})", self.last_block),
                 Ok(_) => {}
-                Err(e) => error!("sync iteration failed: {e:#}"),
+                Err(e) => error!("poll iteration failed: {e:#}"),
             }
         }
     }
 
-    async fn sync_once(&mut self) -> Result<usize> {
+    async fn poll_once(&mut self) -> Result<usize> {
         // TODO 1 — fetch handles past the cursor:
         //   let data = self.subgraph.fetch_handles(self.last_block.to_string(), self.batch_size).await?;
         //   If data.handles is empty, return Ok(0).
