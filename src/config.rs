@@ -8,6 +8,10 @@ use validator::Validate;
 pub struct Config {
     #[validate(nested)]
     pub server: ServerConfig,
+    #[validate(nested)]
+    pub subgraph: SubgraphConfig,
+    #[validate(nested)]
+    pub database: DatabaseConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -16,11 +20,34 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct SubgraphConfig {
+    #[validate(url)]
+    pub url: String,
+    #[validate(range(min = 1))]
+    pub chain_id: u64,
+    #[validate(range(min = 1, max = 3600))]
+    pub poll_interval_seconds: u64,
+    #[validate(range(min = 1, max = 1000))]
+    pub batch_size: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct DatabaseConfig {
+    #[validate(url)]
+    pub url: String,
+    #[validate(range(min = 1, max = 100))]
+    pub max_connections: u32,
+}
+
 impl Config {
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "127.0.0.1")?
             .set_default("server.port", 9000)?
+            .set_default("subgraph.poll_interval_seconds", 10)?
+            .set_default("subgraph.batch_size", 100)?
+            .set_default("database.max_connections", 5)?
             // Load environment variables (NOX_OBSERVER_*)
             .add_source(
                 Environment::with_prefix("NOX_OBSERVER")
@@ -48,13 +75,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn load_returns_defaults_when_no_env_vars_set() {
-        temp_env::with_vars::<&str, &str, _, _>([], || {
-            let config = Config::load().expect("should load");
-            config.validate().expect("should validate");
-            assert_eq!("127.0.0.1", config.server.host);
-            assert_eq!(9000, config.server.port);
-        });
+    fn load_returns_defaults_when_only_required_env_vars_set() {
+        temp_env::with_vars(
+            [
+                ("NOX_OBSERVER_SUBGRAPH__URL", Some("https://example.com/sg")),
+                ("NOX_OBSERVER_SUBGRAPH__CHAIN_ID", Some("421614")),
+                ("NOX_OBSERVER_DATABASE__URL", Some("postgres://x:y@h/d")),
+            ],
+            || {
+                let config = Config::load().expect("should load");
+                config.validate().expect("should validate");
+                assert_eq!("127.0.0.1", config.server.host);
+                assert_eq!(9000, config.server.port);
+                assert_eq!(10, config.subgraph.poll_interval_seconds);
+                assert_eq!(100, config.subgraph.batch_size);
+                assert_eq!(5, config.database.max_connections);
+            },
+        );
     }
 
     #[test]
@@ -63,6 +100,9 @@ mod tests {
             [
                 ("NOX_OBSERVER_SERVER__HOST", Some("0.0.0.0")),
                 ("NOX_OBSERVER_SERVER__PORT", Some("8080")),
+                ("NOX_OBSERVER_SUBGRAPH__URL", Some("https://example.com/sg")),
+                ("NOX_OBSERVER_SUBGRAPH__CHAIN_ID", Some("421614")),
+                ("NOX_OBSERVER_DATABASE__URL", Some("postgres://x:y@h/d")),
             ],
             || {
                 let config = Config::load().expect("should load");
@@ -83,7 +123,12 @@ mod tests {
         std::fs::write(&tmp, "host = \"10.0.0.5\"\nport = 9090\n").expect("write tempfile");
 
         temp_env::with_vars(
-            [("NOX_OBSERVER_SERVER_FILE", Some(tmp.to_str().unwrap()))],
+            [
+                ("NOX_OBSERVER_SERVER_FILE", Some(tmp.to_str().unwrap())),
+                ("NOX_OBSERVER_SUBGRAPH__URL", Some("https://example.com/sg")),
+                ("NOX_OBSERVER_SUBGRAPH__CHAIN_ID", Some("421614")),
+                ("NOX_OBSERVER_DATABASE__URL", Some("postgres://x:y@h/d")),
+            ],
             || {
                 let config = Config::load().expect("should load");
                 config.validate().expect("should validate");
@@ -93,5 +138,23 @@ mod tests {
         );
 
         std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn load_fails_when_required_env_vars_missing() {
+        temp_env::with_vars(
+            [
+                ("NOX_OBSERVER_SUBGRAPH__URL", None::<&str>),
+                ("NOX_OBSERVER_SUBGRAPH__CHAIN_ID", None::<&str>),
+                ("NOX_OBSERVER_DATABASE__URL", None::<&str>),
+            ],
+            || {
+                let result = Config::load();
+                assert!(
+                    result.is_err(),
+                    "load() should fail when required env vars are unset"
+                );
+            },
+        );
     }
 }

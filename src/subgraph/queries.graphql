@@ -1,0 +1,20 @@
+# Fetch a page of handles whose blockNumber is strictly greater than the cursor.
+# Ordered by blockNumber ascending so the caller can advance its cursor reliably.
+query HandlesQuery($first: Int!, $last_block: BigInt!) {
+  handles(
+    first: $first
+    orderBy: blockNumber
+    orderDirection: asc
+    where: { blockNumber_gt: $last_block }
+  ) {
+    id
+    operator
+    blockNumber
+    blockTimestamp
+    transactionHash
+    parentHandles {
+      id
+    }
+  }
+}
+

@@ -2,6 +2,7 @@ pub mod application;
 pub mod config;
 pub mod errors;
 pub mod handlers;
+pub mod subgraph;
 
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
