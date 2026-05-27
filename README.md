@@ -58,35 +58,3 @@ After regenerating:
 
 1. Run `cargo build` — if a query in `src/subgraph/queries.graphql` is no longer compatible with the new schema, the build fails with an explicit error. Fix the queries.
 2. **Commit both files** (`schema.json` and any updated `.graphql` query) in the same PR so reviewers see the contract change.
-
-## SQL queries (`.sqlx/`)
-
-The folder `.sqlx/` at the repository root contains one JSON file per `sqlx::query!` / `sqlx::query_file!` invocation in the codebase. The `sqlx` macro reads these files **at compile time** to validate that each SQL query is syntactically correct and that the Rust types passed as parameters match the actual Postgres column types.
-
-This is what is commonly referred to as `sqlx` **offline mode**.
-
-### How to regenerate
-
-Any time you:
-
-- Add, modify, or remove a `sqlx::query!` / `sqlx::query_file!` call in the Rust code.
-- Change a `.sql` file referenced by `sqlx::query_file!`.
-- Modify the database schema in `sql/schema.sql`.
-
-You should regenerate the `.sqlx/` files to reflect the new contract between the Rust code and the Postgres schema. This ensures that `cargo build` can catch any incompatibilities early.
-
-```bash
-# One-time install (skip if already installed):
-cargo install sqlx-cli --no-default-features --features postgres
-
-# Make sure Postgres is up with the latest schema applied:
-docker compose up -d postgres
-
-# Refresh .sqlx/ from the live database:
-DATABASE_URL=postgres://nox_user:nox_password@localhost:5432/nox_observer cargo sqlx prepare
-```
-
-After regenerating:
-
-1. Run `cargo build` — if any query is now incompatible with the schema, the build fails with a precise error (column name, expected vs actual type, etc.). Fix the query or the Rust call site.
-2. **Commit the `.sqlx/` diff** alongside the SQL or Rust changes so reviewers see the full contract change.

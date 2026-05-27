@@ -2,6 +2,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
+const UPSERT_HANDLE_SQL: &str = include_str!("../../sql/upsert_handle.sql");
+const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../../sql/upsert_handle_parent.sql");
+
 pub struct NewHandle {
     pub handle_id: String,
     pub chain_id: i32,
@@ -30,27 +33,27 @@ impl Db {
     }
 
     pub async fn upsert_handle(&self, handle: &NewHandle) -> Result<()> {
-        sqlx::query_file!(
-            "sql/upsert_handle.sql",
-            handle.handle_id,
-            handle.chain_id,
-            handle.operator,
-            handle.caller,
-            handle.tx_hash,
-            handle.block_timestamp,
-            handle.block_number,
-            handle.resolved_at,
-            handle.processed_by_subgraph,
-            handle.processed_by_s3,
-            handle.processed_by_nats,
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(UPSERT_HANDLE_SQL)
+            .bind(&handle.handle_id)
+            .bind(handle.chain_id)
+            .bind(&handle.operator)
+            .bind(&handle.caller)
+            .bind(&handle.tx_hash)
+            .bind(handle.block_timestamp)
+            .bind(handle.block_number)
+            .bind(handle.resolved_at)
+            .bind(handle.processed_by_subgraph)
+            .bind(handle.processed_by_s3)
+            .bind(handle.processed_by_nats)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
     pub async fn upsert_handle_parent(&self, child_id: &str, parent_id: &str) -> Result<()> {
-        sqlx::query_file!("sql/upsert_handle_parent.sql", child_id, parent_id)
+        sqlx::query(UPSERT_HANDLE_PARENT_SQL)
+            .bind(child_id)
+            .bind(parent_id)
             .execute(&self.pool)
             .await?;
         Ok(())

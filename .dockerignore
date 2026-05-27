@@ -6,7 +6,6 @@ target
 
 *.json
 !generated/**/*.json
-!.sqlx/**/*.json
 *.md
 
 docker-compose.yml

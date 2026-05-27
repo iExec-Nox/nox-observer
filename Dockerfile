@@ -11,11 +11,8 @@ COPY src ./src
 COPY sql ./sql
 # Required at compile time by the graphql_client derive macro
 COPY generated ./generated
-# Required at compile time by sqlx::query!/query_file! macros (offline mode)
-COPY .sqlx ./.sqlx
 
 # Build the application
-ENV SQLX_OFFLINE=true
 RUN cargo build --release
 
 FROM alpine:3.23 AS runtime
