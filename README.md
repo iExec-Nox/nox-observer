@@ -65,16 +65,6 @@ The folder `.sqlx/` at the repository root contains one JSON file per `sqlx::que
 
 This is what is commonly referred to as `sqlx` **offline mode**.
 
-### Why use the sqlx macros instead of `sqlx::query(...)`?
-
-The `sqlx::query!` family of macros gives **compile-time guarantees** that runtime APIs cannot:
-
-- SQL syntax errors are caught by `cargo build`, not by a request in production.
-- Column types are checked against the live Postgres schema — passing a `String` to an `INTEGER` column is a build error.
-- The number of `$1`, `$2`, ... placeholders must match the number of arguments passed to the macro.
-
-The price to pay is that the macro needs access to schema information at build time, which is what `.sqlx/` provides.
-
 ### How to regenerate
 
 Any time you:
