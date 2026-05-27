@@ -150,8 +150,14 @@ impl Poller {
 
             self.db.upsert_handle(&new).await?;
 
+            // Best-effort parent linking: the subgraph may reference parents that
+            // we never see directly (skeleton handles with NULL block metadata,
+            // excluded from our `blockNumber_gt` filter). Drop those links rather
+            // than failing the whole batch on a FK violation.
             for p in &h.parent_handles {
-                self.db.upsert_handle_parent(&h.id, &p.id).await?;
+                if let Err(e) = self.db.upsert_handle_parent(&h.id, &p.id).await {
+                    warn!("dropping parent link {} -> {}: {e:#}", h.id, p.id);
+                }
             }
 
             if block_number > max_block {
