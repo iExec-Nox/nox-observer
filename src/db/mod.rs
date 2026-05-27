@@ -10,9 +10,10 @@ pub struct NewHandle {
     pub chain_id: i32,
     pub operator: String,
     pub caller: Option<String>,
-    pub tx_hash: String,
-    pub block_timestamp: DateTime<Utc>,
-    pub block_number: i64,
+    // TODO: make non-Option once subgraph indexes ValidateInputProof.
+    pub tx_hash: Option<String>,
+    pub block_timestamp: Option<DateTime<Utc>>,
+    pub block_number: Option<i64>,
     pub resolved_at: Option<DateTime<Utc>>,
     pub processed_by_subgraph: bool,
     pub processed_by_s3: bool,

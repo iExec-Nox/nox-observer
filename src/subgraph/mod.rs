@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use graphql_client::{GraphQLQuery, reqwest::post_graphql};
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::db::{Db, NewHandle};
 
@@ -120,26 +120,24 @@ impl Poller {
         let mut max_block = self.last_block;
 
         for h in &data.handles {
-            // Skip handles missing required block metadata — block_number/timestamp/tx_hash
-            // are NOT NULL in our schema but nullable in the subgraph entity.
-            let (Some(bn_str), Some(bt_str), Some(tx)) = (
-                h.block_number.as_ref(),
-                h.block_timestamp.as_ref(),
-                h.transaction_hash.as_ref(),
-            ) else {
-                warn!("skipping handle {} with missing block metadata", h.id);
-                continue;
-            };
-
-            let block_number = parse_block_number(bn_str)?;
-            let block_timestamp = parse_timestamp(bt_str)?;
+            // TODO: drop the Option wrappers once subgraph indexes ValidateInputProof events.
+            let block_number = h
+                .block_number
+                .as_ref()
+                .map(|s| parse_block_number(s))
+                .transpose()?;
+            let block_timestamp = h
+                .block_timestamp
+                .as_ref()
+                .map(|s| parse_timestamp(s))
+                .transpose()?;
 
             let new = NewHandle {
                 handle_id: h.id.clone(),
                 chain_id: self.chain_id,
                 operator: h.operator.clone(),
                 caller: None, // filled later by nats_consumer
-                tx_hash: tx.clone(),
+                tx_hash: h.transaction_hash.clone(),
                 block_timestamp,
                 block_number,
                 resolved_at: None,
@@ -150,18 +148,14 @@ impl Poller {
 
             self.db.upsert_handle(&new).await?;
 
-            // Best-effort parent linking: the subgraph may reference parents that
-            // we never see directly (skeleton handles with NULL block metadata,
-            // excluded from our `blockNumber_gt` filter). Drop those links rather
-            // than failing the whole batch on a FK violation.
             for p in &h.parent_handles {
-                if let Err(e) = self.db.upsert_handle_parent(&h.id, &p.id).await {
-                    warn!("dropping parent link {} -> {}: {e:#}", h.id, p.id);
-                }
+                self.db.upsert_handle_parent(&h.id, &p.id).await?;
             }
 
-            if block_number > max_block {
-                max_block = block_number;
+            if let Some(bn) = block_number
+                && bn > max_block
+            {
+                max_block = bn;
             }
             processed += 1;
         }
