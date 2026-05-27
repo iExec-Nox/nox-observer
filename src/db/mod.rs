@@ -16,11 +16,11 @@ pub struct NewHandle {
     pub processed_by_nats: bool,
 }
 
-pub struct Repository {
+pub struct Db {
     pool: PgPool,
 }
 
-impl Repository {
+impl Db {
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
