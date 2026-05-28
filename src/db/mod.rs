@@ -10,7 +10,7 @@ pub struct NewHandle {
     pub chain_id: i32,
     pub operator: String,
     pub caller: Option<String>,
-    // TODO: make non-Option once subgraph indexes ValidateInputProof.
+    // TODO: make non-Option once subgraph indexes ValidateInputProof event.
     pub tx_hash: Option<String>,
     pub block_timestamp: Option<DateTime<Utc>>,
     pub block_number: Option<i64>,
@@ -57,6 +57,26 @@ impl Db {
             .bind(parent_id)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    /// Returns the persisted subgraph poller skip, or 0 if absent.
+    pub async fn load_skip(&self) -> Result<i64> {
+        let row: Option<(i64,)> = sqlx::query_as("SELECT skip FROM subgraph_poller_state")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(s,)| s).unwrap_or(0))
+    }
+
+    pub async fn save_skip(&self, skip: i64) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO subgraph_poller_state (skip) VALUES ($1)
+             ON CONFLICT (id) DO UPDATE
+                SET skip = EXCLUDED.skip, updated_at = now()",
+        )
+        .bind(skip)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }

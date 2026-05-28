@@ -1,11 +1,11 @@
-# Fetch a page of handles whose blockNumber is strictly greater than the cursor.
-# Ordered by blockNumber ascending so the caller can advance its cursor reliably.
-query HandlesQuery($first: Int!, $last_block: BigInt!) {
+# Fetch a page of handles using offset-based pagination.
+# Ordered by blockTimestamp ascending so we walk the history in creation order.
+query HandlesQuery($first: Int!, $skip: Int!) {
   handles(
     first: $first
-    orderBy: blockNumber
+    skip: $skip
+    orderBy: blockTimestamp
     orderDirection: asc
-    where: { blockNumber_gt: $last_block }
   ) {
     id
     operator
@@ -17,4 +17,3 @@ query HandlesQuery($first: Int!, $last_block: BigInt!) {
     }
   }
 }
-

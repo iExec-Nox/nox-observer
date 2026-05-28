@@ -25,14 +25,28 @@ CREATE TABLE handles (
 -- Every API query filters by chain_id
 CREATE INDEX idx_handles_chain_id ON handles (chain_id);
 
--- Junction table for parent-child relationships between handles (filled by subgraph_syncer).
--- Foreign keys enforce referential integrity: a parent must exist in `handles` before being referenced.
+-- Junction table for parent-child relationships between handles.
+-- Foreign keys to `handles` are intentionally NOT enforced: blockchain timing
+-- (sub-second blocks, ties on blockTimestamp) and subgraph reindexing can produce
+-- links before their endpoints are inserted. The link is kept and becomes valid
+-- once the endpoint catches up. Queries that need handle metadata should INNER
+-- JOIN with `handles` to filter out any temporarily-unresolved links.
 CREATE TABLE handle_parents (
-    child_handle_id  TEXT NOT NULL REFERENCES handles (handle_id) ON DELETE CASCADE,
-    parent_handle_id TEXT NOT NULL REFERENCES handles (handle_id) ON DELETE RESTRICT,
+    child_handle_id  TEXT NOT NULL,
+    parent_handle_id TEXT NOT NULL,
 
     PRIMARY KEY (child_handle_id, parent_handle_id),
     CONSTRAINT no_self_parent CHECK (child_handle_id <> parent_handle_id)
 );
 
 CREATE INDEX idx_handle_parents_parent ON handle_parents (parent_handle_id);
+
+-- Pagination cursor of the subgraph poller. Single-row table.
+CREATE TABLE subgraph_poller_state (
+    id         SMALLINT    PRIMARY KEY DEFAULT 1,
+    skip       BIGINT      NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT singleton         CHECK (id = 1),
+    CONSTRAINT skip_non_negative CHECK (skip >= 0)
+);
