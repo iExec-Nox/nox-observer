@@ -50,6 +50,10 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.3.0
     with:
       image-name: docker-regis.iex.ec/nox-observer
