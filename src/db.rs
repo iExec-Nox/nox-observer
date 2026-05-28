@@ -2,8 +2,8 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-const UPSERT_HANDLE_SQL: &str = include_str!("../../sql/upsert_handle.sql");
-const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../../sql/upsert_handle_parent.sql");
+const UPSERT_HANDLE_SQL: &str = include_str!("../sql/upsert_handle.sql");
+const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../sql/upsert_handle_parent.sql");
 
 pub struct NewHandle {
     pub handle_id: String,
