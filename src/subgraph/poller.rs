@@ -1,45 +1,15 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use thiserror::Error;
 use tokio::time::{MissedTickBehavior, interval, sleep};
 use tracing::{error, info, warn};
 
-use super::client::{SubgraphClient, SubgraphError};
+use super::client::SubgraphClient;
 use crate::db::{Db, NewHandle};
+use crate::errors::PollerError;
 
 const MAX_CONSECUTIVE_RETRIES: u32 = 5;
 const MAX_BACKOFF_EXPONENT: u32 = 5; // 2^5 = 32s cap per attempt
-
-#[derive(Debug, Error)]
-pub enum PollerError {
-    #[error(transparent)]
-    Subgraph(#[from] SubgraphError),
-
-    #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
-
-    #[error("invalid handle scalar {field}={input:?}: {source}")]
-    InvalidScalar {
-        field: &'static str,
-        input: String,
-        #[source]
-        source: std::num::ParseIntError,
-    },
-
-    #[error("block_timestamp out of range: {0}")]
-    BlockTimestampOutOfRange(i64),
-}
-
-impl PollerError {
-    fn is_transient(&self) -> bool {
-        match self {
-            Self::Subgraph(e) => e.is_transient(),
-            Self::Database(_) => true,
-            Self::InvalidScalar { .. } | Self::BlockTimestampOutOfRange(_) => false,
-        }
-    }
-}
 
 pub struct Poller {
     subgraph: SubgraphClient,
@@ -108,9 +78,8 @@ impl Poller {
                         );
                         return Err(e);
                     }
-                    let backoff = Duration::from_secs(
-                        1u64 << consecutive_failures.min(MAX_BACKOFF_EXPONENT),
-                    );
+                    let backoff =
+                        Duration::from_secs(1u64 << consecutive_failures.min(MAX_BACKOFF_EXPONENT));
                     warn!(
                         "transient error during catch-up \
                          (attempt {consecutive_failures}/{MAX_CONSECUTIVE_RETRIES}, \
@@ -166,21 +135,23 @@ impl Poller {
             for p in &h.parent_handles {
                 self.db.upsert_handle_parent(&h.id, &p.id).await?;
             }
+
+            self.skip += 1;
+            self.db.save_skip(self.skip).await?;
         }
 
-        self.skip += n as i64;
-        self.db.save_skip(self.skip).await?;
         info!("polled {n} handles (skip={})", self.skip);
         Ok(n)
     }
 }
 
 fn parse_block_number(s: &str) -> Result<i64, PollerError> {
-    s.parse::<i64>().map_err(|source| PollerError::InvalidScalar {
-        field: "block_number",
-        input: s.to_string(),
-        source,
-    })
+    s.parse::<i64>()
+        .map_err(|source| PollerError::InvalidScalar {
+            field: "block_number",
+            input: s.to_string(),
+            source,
+        })
 }
 
 fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, PollerError> {
@@ -204,7 +175,13 @@ mod tests {
     #[test]
     fn parse_block_number_invalid() {
         let err = parse_block_number("not a number").unwrap_err();
-        assert!(matches!(err, PollerError::InvalidScalar { field: "block_number", .. }));
+        assert!(matches!(
+            err,
+            PollerError::InvalidScalar {
+                field: "block_number",
+                ..
+            }
+        ));
     }
 
     #[test]
