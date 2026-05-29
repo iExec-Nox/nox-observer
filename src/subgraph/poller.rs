@@ -106,16 +106,8 @@ impl Poller {
         }
 
         for h in &data.handles {
-            let block_number = h
-                .block_number
-                .as_ref()
-                .map(|s| parse_block_number(s))
-                .transpose()?;
-            let block_timestamp = h
-                .block_timestamp
-                .as_ref()
-                .map(|s| parse_timestamp(s))
-                .transpose()?;
+            let block_number = h.block_number.as_deref().map(parse_block_number);
+            let block_timestamp = h.block_timestamp.as_deref().map(parse_timestamp);
 
             let new = NewHandle {
                 handle_id: h.id.clone(),
@@ -145,22 +137,19 @@ impl Poller {
     }
 }
 
-fn parse_block_number(s: &str) -> Result<i64, PollerError> {
+/// The subgraph schema guarantees `BigInt` is a valid integer string;
+/// a parse failure here means the upstream contract is broken.
+fn parse_block_number(s: &str) -> i64 {
     s.parse::<i64>()
-        .map_err(|source| PollerError::InvalidScalar {
-            field: "block_number",
-            input: s.to_string(),
-            source,
-        })
+        .expect("subgraph contract: block_number must be a valid i64")
 }
 
-fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, PollerError> {
-    let secs: i64 = s.parse().map_err(|source| PollerError::InvalidScalar {
-        field: "block_timestamp",
-        input: s.to_string(),
-        source,
-    })?;
-    DateTime::from_timestamp(secs, 0).ok_or(PollerError::BlockTimestampOutOfRange(secs))
+fn parse_timestamp(s: &str) -> DateTime<Utc> {
+    let secs: i64 = s
+        .parse()
+        .expect("subgraph contract: block_timestamp must be a valid i64");
+    DateTime::from_timestamp(secs, 0)
+        .expect("subgraph contract: block_timestamp must fit in chrono's range")
 }
 
 #[cfg(test)]
@@ -169,24 +158,12 @@ mod tests {
 
     #[test]
     fn parse_block_number_ok() {
-        assert_eq!(parse_block_number("12345").unwrap(), 12345);
-    }
-
-    #[test]
-    fn parse_block_number_invalid() {
-        let err = parse_block_number("not a number").unwrap_err();
-        assert!(matches!(
-            err,
-            PollerError::InvalidScalar {
-                field: "block_number",
-                ..
-            }
-        ));
+        assert_eq!(parse_block_number("12345"), 12345);
     }
 
     #[test]
     fn parse_timestamp_ok() {
-        let dt = parse_timestamp("1700000000").unwrap();
+        let dt = parse_timestamp("1700000000");
         assert_eq!(dt.timestamp(), 1700000000);
     }
 }

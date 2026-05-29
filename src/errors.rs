@@ -62,17 +62,6 @@ pub enum PollerError {
 
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
-
-    #[error("invalid handle scalar {field}={input:?}: {source}")]
-    InvalidScalar {
-        field: &'static str,
-        input: String,
-        #[source]
-        source: std::num::ParseIntError,
-    },
-
-    #[error("block_timestamp out of range: {0}")]
-    BlockTimestampOutOfRange(i64),
 }
 
 impl PollerError {
@@ -81,7 +70,6 @@ impl PollerError {
         match self {
             Self::Subgraph(e) => e.is_transient(),
             Self::Database(_) => true,
-            Self::InvalidScalar { .. } | Self::BlockTimestampOutOfRange(_) => false,
         }
     }
 }
