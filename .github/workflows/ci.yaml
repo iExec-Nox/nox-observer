@@ -10,7 +10,7 @@ jobs:
   build-and-test:
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/rust-build.yml@rust-build-v2.1.0
     with:
-      rust-version: '1.95.0'
+      rust-version: "1.95.0"
       working-directory: "."
       enable-cache: true
       publish-crates-io: false
@@ -50,10 +50,6 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    permissions:
-      contents: read
-      pull-requests: write
-      security-events: write
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.3.0
     with:
       image-name: docker-regis.iex.ec/nox-observer

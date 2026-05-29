@@ -24,7 +24,6 @@ INSERT INTO handles (
 )
 ON CONFLICT (handle_id) DO UPDATE SET
     caller          = COALESCE(handles.caller,          EXCLUDED.caller),
-    -- TODO: drop COALESCE on tx_hash/block_* once subgraph indexes ValidateInputProof events.
     tx_hash         = COALESCE(handles.tx_hash,         EXCLUDED.tx_hash),
     block_timestamp = COALESCE(handles.block_timestamp, EXCLUDED.block_timestamp),
     block_number    = COALESCE(handles.block_number,    EXCLUDED.block_number),

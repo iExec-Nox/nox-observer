@@ -2,8 +2,7 @@ CREATE TABLE handles (
     handle_id             TEXT        PRIMARY KEY,                  -- 0x... (66 chars)
     chain_id              INT         NOT NULL,
     operator              TEXT        NOT NULL,                     -- 'add', 'mul', 'transfer', ...
-    caller                TEXT        NULL,                          -- filled by nats_consumer, may be NULL when subgraph_syncer inserts first
-    -- TODO: restore NOT NULL once the subgraph indexes  events
+    caller                TEXT        NULL,
     tx_hash               TEXT        NULL,
     block_timestamp       TIMESTAMPTZ NULL,
     block_number          BIGINT      NULL,

@@ -74,7 +74,6 @@ impl Poller {
         }
 
         for h in &data.handles {
-            // TODO: drop the Option wrappers once subgraph indexes ValidateInputProof.
             let block_number = h
                 .block_number
                 .as_ref()
