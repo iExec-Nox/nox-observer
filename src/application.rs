@@ -58,7 +58,7 @@ impl Application {
             db,
             chain_id,
             Duration::from_secs(config.subgraph.poll_interval_seconds),
-            config.subgraph.batch_size as i64,
+            i64::from(config.subgraph.batch_size),
         )
         .await
         .context("Failed to initialize the subgraph poller")?;
