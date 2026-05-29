@@ -1,12 +1,45 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use tokio::time::{MissedTickBehavior, interval};
-use tracing::{error, info};
+use thiserror::Error;
+use tokio::time::{MissedTickBehavior, interval, sleep};
+use tracing::{error, info, warn};
 
-use super::client::SubgraphClient;
+use super::client::{SubgraphClient, SubgraphError};
 use crate::db::{Db, NewHandle};
+
+const MAX_CONSECUTIVE_RETRIES: u32 = 5;
+const MAX_BACKOFF_EXPONENT: u32 = 5; // 2^5 = 32s cap per attempt
+
+#[derive(Debug, Error)]
+pub enum PollerError {
+    #[error(transparent)]
+    Subgraph(#[from] SubgraphError),
+
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+
+    #[error("invalid handle scalar {field}={input:?}: {source}")]
+    InvalidScalar {
+        field: &'static str,
+        input: String,
+        #[source]
+        source: std::num::ParseIntError,
+    },
+
+    #[error("block_timestamp out of range: {0}")]
+    BlockTimestampOutOfRange(i64),
+}
+
+impl PollerError {
+    fn is_transient(&self) -> bool {
+        match self {
+            Self::Subgraph(e) => e.is_transient(),
+            Self::Database(_) => true,
+            Self::InvalidScalar { .. } | Self::BlockTimestampOutOfRange(_) => false,
+        }
+    }
+}
 
 pub struct Poller {
     subgraph: SubgraphClient,
@@ -24,7 +57,7 @@ impl Poller {
         chain_id: i32,
         poll_interval: Duration,
         batch_size: i64,
-    ) -> Result<Self> {
+    ) -> Result<Self, sqlx::Error> {
         let skip = db.load_skip().await?;
         Ok(Self {
             subgraph,
@@ -36,7 +69,7 @@ impl Poller {
         })
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(mut self) -> Result<(), PollerError> {
         info!("poller starting; resuming from skip={}", self.skip);
         self.catch_up().await?;
         info!("caught up at skip={}; entering live mode", self.skip);
@@ -47,23 +80,53 @@ impl Poller {
         loop {
             ticker.tick().await;
             if let Err(e) = self.fetch_and_process_page().await {
+                // Live mode swallows all errors: the next tick is our natural retry.
                 error!("live poll failed: {e:#}");
             }
         }
     }
 
-    /// Walk the whole history at full speed. Stops when a page is non-full.
-    async fn catch_up(&mut self) -> Result<()> {
+    /// Walk the whole history at full speed, retrying on transient errors with
+    /// exponential backoff. Stops when a page is non-full (history caught up).
+    async fn catch_up(&mut self) -> Result<(), PollerError> {
+        let mut consecutive_failures: u32 = 0;
+
         loop {
-            let n = self.fetch_and_process_page().await?;
-            if (n as i64) < self.batch_size {
-                break;
+            match self.fetch_and_process_page().await {
+                Ok(n) => {
+                    consecutive_failures = 0;
+                    if (n as i64) < self.batch_size {
+                        return Ok(());
+                    }
+                }
+                Err(e) if e.is_transient() => {
+                    consecutive_failures += 1;
+                    if consecutive_failures > MAX_CONSECUTIVE_RETRIES {
+                        error!(
+                            "aborting catch-up after {MAX_CONSECUTIVE_RETRIES} consecutive \
+                             transient errors"
+                        );
+                        return Err(e);
+                    }
+                    let backoff = Duration::from_secs(
+                        1u64 << consecutive_failures.min(MAX_BACKOFF_EXPONENT),
+                    );
+                    warn!(
+                        "transient error during catch-up \
+                         (attempt {consecutive_failures}/{MAX_CONSECUTIVE_RETRIES}, \
+                         retrying in {backoff:?}): {e:#}"
+                    );
+                    sleep(backoff).await;
+                }
+                Err(e) => {
+                    // Permanent error: no point retrying.
+                    return Err(e);
+                }
             }
         }
-        Ok(())
     }
 
-    async fn fetch_and_process_page(&mut self) -> Result<usize> {
+    async fn fetch_and_process_page(&mut self) -> Result<usize, PollerError> {
         let data = self
             .subgraph
             .fetch_handles(self.skip, self.batch_size)
@@ -112,13 +175,21 @@ impl Poller {
     }
 }
 
-fn parse_block_number(s: &str) -> Result<i64> {
-    s.parse::<i64>().context("invalid block_number")
+fn parse_block_number(s: &str) -> Result<i64, PollerError> {
+    s.parse::<i64>().map_err(|source| PollerError::InvalidScalar {
+        field: "block_number",
+        input: s.to_string(),
+        source,
+    })
 }
 
-fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
-    let secs: i64 = s.parse().context("invalid block_timestamp")?;
-    DateTime::from_timestamp(secs, 0).ok_or_else(|| anyhow!("out-of-range block_timestamp: {secs}"))
+fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, PollerError> {
+    let secs: i64 = s.parse().map_err(|source| PollerError::InvalidScalar {
+        field: "block_timestamp",
+        input: s.to_string(),
+        source,
+    })?;
+    DateTime::from_timestamp(secs, 0).ok_or(PollerError::BlockTimestampOutOfRange(secs))
 }
 
 #[cfg(test)]
@@ -132,7 +203,8 @@ mod tests {
 
     #[test]
     fn parse_block_number_invalid() {
-        assert!(parse_block_number("not a number").is_err());
+        let err = parse_block_number("not a number").unwrap_err();
+        assert!(matches!(err, PollerError::InvalidScalar { field: "block_number", .. }));
     }
 
     #[test]

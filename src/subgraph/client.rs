@@ -26,6 +26,12 @@ pub enum SubgraphError {
     EmptyResponse,
 }
 
+impl SubgraphError {
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Self::Http(_) | Self::EmptyResponse)
+    }
+}
+
 pub type SubgraphResult<T> = Result<T, SubgraphError>;
 
 pub struct SubgraphClient {

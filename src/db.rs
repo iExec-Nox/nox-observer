@@ -1,4 +1,3 @@
-use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
@@ -24,7 +23,7 @@ pub struct Db {
 }
 
 impl Db {
-    pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
+    pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .connect(database_url)
@@ -32,7 +31,7 @@ impl Db {
         Ok(Self { pool })
     }
 
-    pub async fn upsert_handle(&self, handle: &NewHandle) -> Result<()> {
+    pub async fn upsert_handle(&self, handle: &NewHandle) -> Result<(), sqlx::Error> {
         sqlx::query(UPSERT_HANDLE_SQL)
             .bind(&handle.handle_id)
             .bind(handle.chain_id)
@@ -50,7 +49,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn upsert_handle_parent(&self, child_id: &str, parent_id: &str) -> Result<()> {
+    pub async fn upsert_handle_parent(&self, child_id: &str, parent_id: &str) -> Result<(), sqlx::Error> {
         sqlx::query(UPSERT_HANDLE_PARENT_SQL)
             .bind(child_id)
             .bind(parent_id)
@@ -60,14 +59,14 @@ impl Db {
     }
 
     /// Returns the persisted subgraph poller skip, or 0 if absent.
-    pub async fn load_skip(&self) -> Result<i64> {
+    pub async fn load_skip(&self) -> Result<i64, sqlx::Error> {
         let row: Option<(i64,)> = sqlx::query_as("SELECT skip FROM subgraph_poller_state")
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(|(s,)| s).unwrap_or(0))
     }
 
-    pub async fn save_skip(&self, skip: i64) -> Result<()> {
+    pub async fn save_skip(&self, skip: i64) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO subgraph_poller_state (skip) VALUES ($1)
              ON CONFLICT (id) DO UPDATE
