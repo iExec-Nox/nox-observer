@@ -93,19 +93,18 @@ impl Application {
 
         info!("Server bound to {}", addr);
 
-        // Launch the subgraph poller as a background task.
-        let poller_handle = tokio::spawn(async move {
-            if let Err(e) = self.poller.run().await {
-                error!("subgraph poller stopped with error: {e:#}");
+        let poller = self.poller;
+        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+
+        tokio::select! {
+            res = poller.run() => {
+                error!("subgraph poller exited; bringing observer down");
+                res.context("subgraph poller failed")?;
             }
-        });
-
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await
-            .context("Server encountered an error during execution")?;
-
-        poller_handle.abort();
+            res = server => {
+                res.context("Server encountered an error during execution")?;
+            }
+        }
         info!("Server shutdown complete");
         Ok(())
     }
