@@ -49,7 +49,11 @@ impl Db {
         Ok(())
     }
 
-    pub async fn upsert_handle_parent(&self, child_id: &str, parent_id: &str) -> Result<(), sqlx::Error> {
+    pub async fn upsert_handle_parent(
+        &self,
+        child_id: &str,
+        parent_id: &str,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(UPSERT_HANDLE_PARENT_SQL)
             .bind(child_id)
             .bind(parent_id)
