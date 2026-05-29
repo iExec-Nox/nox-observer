@@ -1,8 +1,8 @@
 use graphql_client::{GraphQLQuery, reqwest::post_graphql};
 use std::time::Duration;
-use thiserror::Error;
 
-// Subgraph custom scalars — kept as String here, parsed in the mapping layer.
+use crate::errors::{SubgraphError, SubgraphResult};
+
 pub type Bytes = String;
 pub type BigInt = String;
 
@@ -13,20 +13,6 @@ pub type BigInt = String;
     response_derives = "Debug, Clone"
 )]
 pub struct HandlesQuery;
-
-#[derive(Debug, Error)]
-pub enum SubgraphError {
-    #[error("HTTP request to the subgraph failed: {0}")]
-    Http(#[from] reqwest::Error),
-
-    #[error("subgraph returned errors: {0:?}")]
-    GraphqlErrors(Vec<graphql_client::Error>),
-
-    #[error("subgraph returned no data")]
-    EmptyResponse,
-}
-
-pub type SubgraphResult<T> = Result<T, SubgraphError>;
 
 pub struct SubgraphClient {
     http: reqwest::Client,

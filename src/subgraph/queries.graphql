@@ -1,5 +1,3 @@
-# Fetch a page of handles using offset-based pagination.
-# Ordered by blockTimestamp ascending so we walk the history in creation order.
 query HandlesQuery($first: Int!, $skip: Int!) {
   handles(
     first: $first
