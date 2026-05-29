@@ -2,7 +2,6 @@ use graphql_client::{GraphQLQuery, reqwest::post_graphql};
 use std::time::Duration;
 use thiserror::Error;
 
-// Subgraph custom scalars — kept as String here, parsed in the mapping layer.
 pub type Bytes = String;
 pub type BigInt = String;
 
