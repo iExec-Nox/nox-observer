@@ -93,11 +93,6 @@ impl Config {
             .set_default("subgraph.poll_interval_seconds", 10)?
             .set_default("subgraph.batch_size", 1000)?
             .set_default("database.max_connections", 5)?
-            // NATS consumer defaults — match nox-runner's NatsConfig defaults.
-            // `nats.urls` has no production default; an empty default lets
-            // Config::load() succeed and surfaces the missing value as a
-            // validation error in `validate()` (matches subgraph.url / database.url
-            // pattern).
             .set_default("nats.urls", Vec::<String>::new())?
             .set_default("nats.tls.enabled", true)?
             .set_default("nats.tls.ca", "")?
@@ -108,9 +103,6 @@ impl Config {
             .set_default("nats.consumer_max_deliver", 10)?
             .set_default("nats.max_ack_pending", 10)?
             .set_default("nats.max_batch", 10)?
-            // Load environment variables (NOX_OBSERVER_*).
-            // `nats.urls` is comma-list-parsed so deployments can pass a single
-            // env var (e.g. NOX_OBSERVER_NATS__URLS=nats://h1,nats://h2,nats://h3).
             .add_source(
                 Environment::with_prefix("NOX_OBSERVER")
                     .prefix_separator("_")
@@ -182,7 +174,6 @@ mod tests {
             assert_eq!(10, config.subgraph.poll_interval_seconds);
             assert_eq!(1000, config.subgraph.batch_size);
             assert_eq!(5, config.database.max_connections);
-            // NATS defaults
             assert_eq!(2, config.nats.urls.len());
             assert!(config.nats.tls.enabled);
             assert_eq!("nox_ingestor", config.nats.stream_name);
@@ -234,8 +225,6 @@ mod tests {
 
     #[test]
     fn load_succeeds_validate_fails_when_nats_urls_empty() {
-        // urls default is empty; with no env override, load() succeeds but
-        // validate() rejects via validate_nats_urls.
         let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
         vars.extend([
             ("NOX_OBSERVER_NATS__TLS__ENABLED", Some("false")),

@@ -51,9 +51,10 @@ impl Db {
         Ok(())
     }
 
-    /// Upsert a batch of handles in a single Postgres transaction. Used by the
-    /// NATS consumer: one PG tx per NATS message — commit precedes ack.
-    /// Idempotency is guaranteed by `ON CONFLICT (handle_id) DO UPDATE` in
+    /// Upsert a batch of handles in a single Postgres transaction.
+    ///
+    /// Used by the NATS consumer: one PG tx per NATS message — commit precedes
+    /// ack. Idempotency is guaranteed by `ON CONFLICT (handle_id) DO UPDATE` in
     /// `sql/upsert_handle.sql` (COALESCE preserves columns written by sibling writers).
     pub async fn upsert_handles_in_tx(&self, handles: &[NewHandle]) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
