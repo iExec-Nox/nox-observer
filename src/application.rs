@@ -65,9 +65,6 @@ impl Application {
         .await
         .context("Failed to initialize the subgraph poller")?;
 
-        // NATS consumer — connects with retry_on_initial_connect so observer
-        // boots even when NATS is unreachable (spec §2.M). Failure here is
-        // bootstrap-level (e.g. invalid TLS PEM); surface it.
         let nats_client = NatsClient::connect(&config.nats)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize NATS client: {e}"))?;
