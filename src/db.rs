@@ -4,29 +4,6 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 const UPSERT_HANDLE_SQL: &str = include_str!("../sql/upsert_handle.sql");
 const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../sql/upsert_handle_parent.sql");
 
-/// Bind a [`NewHandle`] to the canonical upsert statement.
-///
-/// Single source of truth for the bind list so the pool path ([`Db::upsert_handle`])
-/// and the transaction path ([`Db::upsert_handles_in_tx`]) can't drift — the
-/// returned [`sqlx::query::Query`] executes against any `sqlx::Executor`
-/// (`&PgPool` or `&mut` transaction connection).
-fn bind_upsert_handle(
-    handle: &NewHandle,
-) -> sqlx::query::Query<'_, sqlx::Postgres, sqlx::postgres::PgArguments> {
-    sqlx::query(UPSERT_HANDLE_SQL)
-        .bind(&handle.handle_id)
-        .bind(handle.chain_id)
-        .bind(&handle.operator)
-        .bind(&handle.caller)
-        .bind(&handle.tx_hash)
-        .bind(handle.block_timestamp)
-        .bind(handle.block_number)
-        .bind(handle.resolved_at)
-        .bind(handle.processed_by_subgraph)
-        .bind(handle.processed_by_s3)
-        .bind(handle.processed_by_nats)
-}
-
 #[derive(Debug)]
 pub struct NewHandle {
     pub handle_id: String,
@@ -107,4 +84,27 @@ impl Db {
         .await?;
         Ok(())
     }
+}
+
+/// Bind a [`NewHandle`] to the canonical upsert statement.
+///
+/// Single source of truth for the bind list so the pool path ([`Db::upsert_handle`])
+/// and the transaction path ([`Db::upsert_handles_in_tx`]) can't drift — the
+/// returned [`sqlx::query::Query`] executes against any `sqlx::Executor`
+/// (`&PgPool` or `&mut` transaction connection).
+fn bind_upsert_handle(
+    handle: &NewHandle,
+) -> sqlx::query::Query<'_, sqlx::Postgres, sqlx::postgres::PgArguments> {
+    sqlx::query(UPSERT_HANDLE_SQL)
+        .bind(&handle.handle_id)
+        .bind(handle.chain_id)
+        .bind(&handle.operator)
+        .bind(&handle.caller)
+        .bind(&handle.tx_hash)
+        .bind(handle.block_timestamp)
+        .bind(handle.block_number)
+        .bind(handle.resolved_at)
+        .bind(handle.processed_by_subgraph)
+        .bind(handle.processed_by_s3)
+        .bind(handle.processed_by_nats)
 }
