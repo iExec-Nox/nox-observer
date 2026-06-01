@@ -4,6 +4,7 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 const UPSERT_HANDLE_SQL: &str = include_str!("../sql/upsert_handle.sql");
 const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../sql/upsert_handle_parent.sql");
 
+#[derive(Debug)]
 pub struct NewHandle {
     pub handle_id: String,
     pub chain_id: i32,
@@ -18,6 +19,7 @@ pub struct NewHandle {
     pub processed_by_nats: bool,
 }
 
+#[derive(Clone)]
 pub struct Db {
     pool: PgPool,
 }
@@ -46,6 +48,32 @@ impl Db {
             .bind(handle.processed_by_nats)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    /// Upsert a batch of handles in a single Postgres transaction. Used by the
+    /// NATS consumer: one PG tx per NATS message — commit precedes ack.
+    /// Idempotency is guaranteed by `ON CONFLICT (handle_id) DO UPDATE` in
+    /// `sql/upsert_handle.sql` (COALESCE preserves columns written by sibling writers).
+    pub async fn upsert_handles_in_tx(&self, handles: &[NewHandle]) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        for h in handles {
+            sqlx::query(UPSERT_HANDLE_SQL)
+                .bind(&h.handle_id)
+                .bind(h.chain_id)
+                .bind(&h.operator)
+                .bind(&h.caller)
+                .bind(&h.tx_hash)
+                .bind(h.block_timestamp)
+                .bind(h.block_number)
+                .bind(h.resolved_at)
+                .bind(h.processed_by_subgraph)
+                .bind(h.processed_by_s3)
+                .bind(h.processed_by_nats)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 

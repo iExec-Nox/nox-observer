@@ -9,15 +9,15 @@ use tracing::warn;
 
 #[derive(Error, Debug)]
 pub enum ObserverError {
-    #[error("Error message example: {0}")]
-    ErrorVariantExample(String),
+    #[error("NATS error: {0}")]
+    Nats(String),
 }
 
 impl IntoResponse for ObserverError {
     fn into_response(self) -> axum::response::Response {
         warn!("Request failed: {}", self);
         let status = match &self {
-            ObserverError::ErrorVariantExample(_) => StatusCode::BAD_REQUEST,
+            ObserverError::Nats(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, Json(json!({ "error": self.to_string() }))).into_response()
     }
