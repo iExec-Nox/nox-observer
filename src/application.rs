@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::Config;
 use crate::db::Db;
 use crate::handlers;
+use crate::nats::{Consumer, NatsClient};
 use crate::subgraph::{Poller, SubgraphClient};
 
 #[derive(Clone)]
@@ -31,6 +32,7 @@ pub struct Application {
     state: AppState,
     prometheus_layer: PrometheusMetricLayer<'static>,
     poller: Poller,
+    consumer: Consumer,
 }
 
 impl Application {
@@ -55,7 +57,7 @@ impl Application {
 
         let poller = Poller::new(
             subgraph,
-            db,
+            db.clone(),
             chain_id,
             Duration::from_secs(config.subgraph.poll_interval_seconds),
             i64::from(config.subgraph.batch_size),
@@ -63,11 +65,20 @@ impl Application {
         .await
         .context("Failed to initialize the subgraph poller")?;
 
+        // NATS consumer — connects with retry_on_initial_connect so observer
+        // boots even when NATS is unreachable (spec §2.M). Failure here is
+        // bootstrap-level (e.g. invalid TLS PEM); surface it.
+        let nats_client = NatsClient::connect(&config.nats)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize NATS client: {e}"))?;
+        let consumer = Consumer::new(nats_client, db, config.nats.clone());
+
         Ok(Self {
             config,
             state: AppState { metrics_handle },
             prometheus_layer,
             poller,
+            consumer,
         })
     }
 
@@ -94,12 +105,17 @@ impl Application {
         info!("Server bound to {}", addr);
 
         let poller = self.poller;
+        let consumer = self.consumer;
         let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
         tokio::select! {
             res = poller.run() => {
                 error!("subgraph poller exited; bringing observer down");
                 res.context("subgraph poller failed")?;
+            }
+            res = consumer.run() => {
+                error!("nats consumer exited; bringing observer down");
+                res.context("nats consumer failed")?;
             }
             res = server => {
                 res.context("Server encountered an error during execution")?;
