@@ -4,6 +4,7 @@ pub mod db;
 pub mod errors;
 pub mod events;
 pub mod handlers;
+pub mod nats;
 pub mod subgraph;
 
 use tracing::{error, info};
@@ -15,6 +16,13 @@ use crate::config::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // rustls ring crypto provider — required by async-nats TLS path.
+    // Log-and-continue mirrors nox-runner's `error!` form (vs ingestor's `expect`):
+    // a duplicate-install panic shouldn't kill the process.
+    async_nats::rustls::crypto::ring::default_provider()
+        .install_default()
+        .unwrap_or_else(|_| error!("Failed to install rustls ring crypto provider"));
+
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
