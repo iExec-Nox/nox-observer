@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use axum::{Router, extract::FromRef, routing::get};
 use axum_prometheus::{
@@ -6,10 +8,12 @@ use axum_prometheus::{
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::signal;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
+use crate::db::Db;
 use crate::handlers;
+use crate::subgraph::{Poller, SubgraphClient};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -26,6 +30,7 @@ pub struct Application {
     config: Config,
     state: AppState,
     prometheus_layer: PrometheusMetricLayer<'static>,
+    poller: Poller,
 }
 
 impl Application {
@@ -35,10 +40,34 @@ impl Application {
             .build();
         let metrics_handle = Handle::make_default_handle(Handle::default());
 
+        let db = Db::connect(&config.database.url, config.database.max_connections)
+            .await
+            .context("Failed to connect to the database")?;
+
+        let subgraph = SubgraphClient::new(config.subgraph.url.clone())
+            .context("Failed to build the subgraph client")?;
+
+        let chain_id: i32 = config
+            .subgraph
+            .chain_id
+            .try_into()
+            .context("subgraph.chain_id does not fit in i32")?;
+
+        let poller = Poller::new(
+            subgraph,
+            db,
+            chain_id,
+            Duration::from_secs(config.subgraph.poll_interval_seconds),
+            i64::from(config.subgraph.batch_size),
+        )
+        .await
+        .context("Failed to initialize the subgraph poller")?;
+
         Ok(Self {
             config,
             state: AppState { metrics_handle },
             prometheus_layer,
+            poller,
         })
     }
 
@@ -64,11 +93,18 @@ impl Application {
 
         info!("Server bound to {}", addr);
 
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await
-            .context("Server encountered an error during execution")?;
+        let poller = self.poller;
+        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
+        tokio::select! {
+            res = poller.run() => {
+                error!("subgraph poller exited; bringing observer down");
+                res.context("subgraph poller failed")?;
+            }
+            res = server => {
+                res.context("Server encountered an error during execution")?;
+            }
+        }
         info!("Server shutdown complete");
         Ok(())
     }

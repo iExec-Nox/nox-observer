@@ -46,7 +46,7 @@ impl Config {
             .set_default("server.host", "127.0.0.1")?
             .set_default("server.port", 9000)?
             .set_default("subgraph.poll_interval_seconds", 10)?
-            .set_default("subgraph.batch_size", 100)?
+            .set_default("subgraph.batch_size", 1000)?
             .set_default("database.max_connections", 5)?
             // Load environment variables (NOX_OBSERVER_*)
             .add_source(
@@ -88,7 +88,7 @@ mod tests {
                 assert_eq!("127.0.0.1", config.server.host);
                 assert_eq!(9000, config.server.port);
                 assert_eq!(10, config.subgraph.poll_interval_seconds);
-                assert_eq!(100, config.subgraph.batch_size);
+                assert_eq!(1000, config.subgraph.batch_size);
                 assert_eq!(5, config.database.max_connections);
             },
         );

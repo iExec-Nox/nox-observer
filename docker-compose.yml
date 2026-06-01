@@ -35,6 +35,19 @@ services:
       postgres:
         condition: service_healthy
 
+  nox-observer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nox-observer
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:${NOX_OBSERVER_PORT:-9000}:9000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   pgadmin_data:
