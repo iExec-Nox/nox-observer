@@ -16,9 +16,6 @@ use crate::config::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // rustls ring crypto provider — required by async-nats TLS path.
-    // Log-and-continue mirrors nox-runner's `error!` form (vs ingestor's `expect`):
-    // a duplicate-install panic shouldn't kill the process.
     async_nats::rustls::crypto::ring::default_provider()
         .install_default()
         .unwrap_or_else(|_| error!("Failed to install rustls ring crypto provider"));
