@@ -11,7 +11,8 @@ use serde::Deserialize;
 /// Handle type for encrypted values (hex-encoded bytes32)
 pub type Handle = String;
 
-/// Describes the 2 plaintext operands to encrypt and associate to the result handle.
+/// Describes the plaintext value to wrap into a public handle, with its TEE type
+/// and the resulting handle
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EncryptionOperation {
@@ -456,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_returns_events_in_log_index_order_when_tx_has_multiple_events() {
+    fn deserialize_preserves_payload_array_order_when_tx_has_multiple_events() {
         let json = make_tx_message_json(&format!(
             r#"{{"logIndex": 0, "type": "wrap_as_public_handle", "value":"1","teeType":1,"handle":"0xa"}},
                {{"logIndex": 1, "type": "add", "leftHandOperand":"{HANDLE_1}","rightHandOperand":"{HANDLE_2}","result":"{HANDLE_3}"}},
