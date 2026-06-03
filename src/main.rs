@@ -19,14 +19,14 @@ async fn main() -> anyhow::Result<()> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    async_nats::rustls::crypto::ring::default_provider()
-        .install_default()
-        .unwrap_or_else(|_| error!("Failed to install rustls ring crypto provider"));
-
     tracing_subscriber::registry()
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    async_nats::rustls::crypto::ring::default_provider()
+        .install_default()
+        .unwrap_or_else(|_| error!("Failed to install rustls ring crypto provider"));
 
     let config = Config::load().inspect_err(|e| error!("Failed to load configuration: {e}"))?;
     config
