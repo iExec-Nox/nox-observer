@@ -2,6 +2,7 @@ pub mod application;
 pub mod config;
 pub mod db;
 pub mod errors;
+pub mod events;
 pub mod handlers;
 pub mod subgraph;
 

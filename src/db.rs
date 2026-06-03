@@ -4,6 +4,7 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 const UPSERT_HANDLE_SQL: &str = include_str!("../sql/upsert_handle.sql");
 const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../sql/upsert_handle_parent.sql");
 
+#[derive(Debug)]
 pub struct NewHandle {
     pub handle_id: String,
     pub chain_id: i32,
@@ -18,6 +19,7 @@ pub struct NewHandle {
     pub processed_by_nats: bool,
 }
 
+#[derive(Clone)]
 pub struct Db {
     pool: PgPool,
 }
@@ -32,20 +34,16 @@ impl Db {
     }
 
     pub async fn upsert_handle(&self, handle: &NewHandle) -> Result<(), sqlx::Error> {
-        sqlx::query(UPSERT_HANDLE_SQL)
-            .bind(&handle.handle_id)
-            .bind(handle.chain_id)
-            .bind(&handle.operator)
-            .bind(&handle.caller)
-            .bind(&handle.tx_hash)
-            .bind(handle.block_timestamp)
-            .bind(handle.block_number)
-            .bind(handle.resolved_at)
-            .bind(handle.processed_by_subgraph)
-            .bind(handle.processed_by_s3)
-            .bind(handle.processed_by_nats)
-            .execute(&self.pool)
-            .await?;
+        bind_upsert_handle(handle).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn upsert_handles_in_tx(&self, handles: &[NewHandle]) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        for h in handles {
+            bind_upsert_handle(h).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -81,4 +79,22 @@ impl Db {
         .await?;
         Ok(())
     }
+}
+
+/// ------------- Helpers -------------
+fn bind_upsert_handle(
+    handle: &NewHandle,
+) -> sqlx::query::Query<'_, sqlx::Postgres, sqlx::postgres::PgArguments> {
+    sqlx::query(UPSERT_HANDLE_SQL)
+        .bind(&handle.handle_id)
+        .bind(handle.chain_id)
+        .bind(&handle.operator)
+        .bind(&handle.caller)
+        .bind(&handle.tx_hash)
+        .bind(handle.block_timestamp)
+        .bind(handle.block_number)
+        .bind(handle.resolved_at)
+        .bind(handle.processed_by_subgraph)
+        .bind(handle.processed_by_s3)
+        .bind(handle.processed_by_nats)
 }

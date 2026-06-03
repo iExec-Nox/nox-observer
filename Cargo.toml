@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+alloy-primitives = { version = "1.5.7", features = ["serde"] }
 anyhow = "1.0.102"
 axum = "0.8.8"
 axum-prometheus = "0.10.0"
