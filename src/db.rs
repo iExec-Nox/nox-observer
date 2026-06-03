@@ -38,11 +38,6 @@ impl Db {
         Ok(())
     }
 
-    /// Upsert a batch of handles in a single Postgres transaction.
-    ///
-    /// Used by the NATS consumer: one PG tx per NATS message — commit precedes
-    /// ack. Idempotency is guaranteed by `ON CONFLICT (handle_id) DO UPDATE` in
-    /// `sql/upsert_handle.sql` (COALESCE preserves columns written by sibling writers).
     pub async fn upsert_handles_in_tx(&self, handles: &[NewHandle]) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         for h in handles {
@@ -86,12 +81,7 @@ impl Db {
     }
 }
 
-/// Bind a [`NewHandle`] to the canonical upsert statement.
-///
-/// Single source of truth for the bind list so the pool path ([`Db::upsert_handle`])
-/// and the transaction path ([`Db::upsert_handles_in_tx`]) can't drift — the
-/// returned [`sqlx::query::Query`] executes against any `sqlx::Executor`
-/// (`&PgPool` or `&mut` transaction connection).
+/// ------------- Helpers -------------
 fn bind_upsert_handle(
     handle: &NewHandle,
 ) -> sqlx::query::Query<'_, sqlx::Postgres, sqlx::postgres::PgArguments> {
