@@ -16,12 +16,12 @@ use crate::config::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
     async_nats::rustls::crypto::ring::default_provider()
         .install_default()
         .unwrap_or_else(|_| error!("Failed to install rustls ring crypto provider"));
-
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(env_filter)
