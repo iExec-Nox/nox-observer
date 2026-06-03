@@ -22,9 +22,7 @@ pub struct ChainBucket {
 pub struct S3Client {
     chains: HashMap<i32, ChainBucket>,
     semaphore: Arc<Semaphore>,
-    /// Chain IDs already warned about (no configured bucket). Process-lifetime
-    /// warn-once: `filter_present` runs every poll tick, so a per-call set would
-    /// log-spam an unconfigured chain on every tick.
+    /// Chain IDs already warned about (no configured bucket)
     warned_chains: Mutex<HashSet<i32>>,
 }
 
@@ -133,7 +131,6 @@ impl S3Client {
     }
 
     /// Emit a single `warn!` per unconfigured chain over the process lifetime.
-    /// A poisoned lock degrades to silent (never blocks the resolver loop).
     fn warn_unconfigured_chain_once(&self, chain_id: i32) {
         if let Ok(mut warned) = self.warned_chains.lock()
             && warned.insert(chain_id)

@@ -7,9 +7,8 @@ use super::client::S3Client;
 use crate::db::Db;
 use crate::errors::S3ResolverError;
 
-/// The S3 writer: periodically resolves handles whose ciphertext has appeared
-/// in S3, setting `resolved_at` + `processed_by_s3`. One of the three disjoint
-/// writers (alongside the subgraph poller and NATS consumer).
+/// Periodically resolves handles whose ciphertext has appeared in S3, setting
+/// `resolved_at` + `processed_by_s3`
 pub struct S3Resolver {
     s3: S3Client,
     db: Db,
@@ -27,12 +26,6 @@ impl S3Resolver {
         }
     }
 
-    /// Run the interval loop forever. Per-tick errors are swallowed and logged
-    /// (the next tick is the natural retry), so this only ever returns by
-    /// diverging — never with `Ok`. Shutdown is driven by the outer
-    /// `tokio::select!` aborting this task; that is safe because the only DB
-    /// write (`mark_resolved_by_s3`) is a single idempotent UPDATE, so a
-    /// mid-tick abort leaves no partial state.
     pub async fn run(self) -> Result<(), S3ResolverError> {
         info!(
             poll_interval = ?self.poll_interval,
