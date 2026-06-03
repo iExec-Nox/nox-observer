@@ -6,7 +6,7 @@ CREATE TABLE handles (
     tx_hash               TEXT        NULL,
     block_timestamp       TIMESTAMPTZ NULL,
     block_number          BIGINT      NULL,
-    resolved_at           TIMESTAMPTZ NULL,                         -- set by s3_poller when ciphertext is present
+    resolved_at           TIMESTAMPTZ NULL,                         -- set by s3_resolver when ciphertext is present
     processed_by_subgraph BOOLEAN     NOT NULL DEFAULT FALSE,
     processed_by_s3       BOOLEAN     NOT NULL DEFAULT FALSE,
     processed_by_nats     BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -23,6 +23,11 @@ CREATE TABLE handles (
 
 -- Every API query filters by chain_id
 CREATE INDEX idx_handles_chain_id ON handles (chain_id);
+
+-- Hot path of the s3_resolver: scan unresolved handles oldest-first. Partial
+-- index keeps it small (shrinks as handles resolve) and supports both the
+-- `WHERE NOT processed_by_s3` filter and the `ORDER BY block_timestamp` sort.
+CREATE INDEX idx_handles_unresolved ON handles (block_timestamp) WHERE NOT processed_by_s3;
 
 -- Junction table for parent-child relationships between handles.
 -- Foreign keys to `handles` are intentionally NOT enforced: blockchain timing

@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use config_secret::EnvironmentSecretFile;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 use validator::{Validate, ValidationError};
 
@@ -14,6 +16,8 @@ pub struct Config {
     pub database: DatabaseConfig,
     #[validate(nested)]
     pub nats: NatsConfig,
+    #[validate(nested)]
+    pub s3: S3Config,
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -85,6 +89,68 @@ fn validate_nats_urls(urls: &Vec<String>) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// S3 resolver configuration covering all chains and tuning knobs.
+///
+/// `chains` maps chain IDs (as strings, because the `config` crate lowercases
+/// env keys and deserializes map keys as strings) to per-chain S3 settings.
+/// The downstream consumer converts them to `u64` chain IDs as needed.
+/// Chosen over `HashMap<u64, _>` because the config crate 0.15.x produces
+/// string-typed map keys from env, causing a u64 deserialization failure.
+///
+/// `Serialize` is required (unlike sibling config structs): `validator` 0.20's
+/// derive on the `#[validate(nested)]` `HashMap` field emits a bound requiring
+/// `S3ChainConfig: Serialize`. Do not remove it without dropping nested
+/// validation. It is never actually serialized at runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct S3Config {
+    #[validate(custom(function = "validate_s3_chains_non_empty"))]
+    #[validate(nested)]
+    pub chains: HashMap<String, S3ChainConfig>,
+    #[validate(range(min = 1, max = 3600))]
+    pub poll_interval_seconds: u64,
+    #[validate(range(min = 1, max = 1000))]
+    pub batch_size: u32,
+    #[validate(range(min = 1, max = 256))]
+    pub max_concurrent_requests: usize,
+}
+
+/// Per-chain S3 connection configuration.
+///
+/// `access_key`, `secret_key`, `bucket`, and `region` are required (no defaults).
+/// `timeout` defaults to 30 seconds.
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct S3ChainConfig {
+    /// Optional custom endpoint for S3-compatible backends (e.g. MinIO). When unset, the AWS SDK uses standard regional endpoints.
+    #[validate(url)]
+    pub endpoint_url: Option<String>,
+    #[validate(length(min = 1))]
+    pub bucket: String,
+    #[validate(length(min = 1))]
+    pub access_key: String,
+    #[validate(length(min = 1))]
+    pub secret_key: String,
+    #[validate(length(min = 1))]
+    pub region: String,
+    #[serde(default = "default_s3_timeout")]
+    #[validate(range(min = 1))]
+    pub timeout: u64,
+}
+
+fn default_s3_timeout() -> u64 {
+    30
+}
+
+fn validate_s3_chains_non_empty(
+    chains: &HashMap<String, S3ChainConfig>,
+) -> Result<(), ValidationError> {
+    if chains.is_empty() {
+        return Err(ValidationError::new(
+            "s3.chains must contain at least one chain",
+        ));
+    }
+    Ok(())
+}
+
 impl Config {
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
@@ -103,6 +169,9 @@ impl Config {
             .set_default("nats.consumer_max_deliver", 10)?
             .set_default("nats.max_ack_pending", 10)?
             .set_default("nats.max_batch", 10)?
+            .set_default("s3.poll_interval_seconds", 10)?
+            .set_default("s3.batch_size", 500)?
+            .set_default("s3.max_concurrent_requests", 16)?
             .add_source(
                 Environment::with_prefix("NOX_OBSERVER")
                     .prefix_separator("_")
@@ -162,10 +231,31 @@ mod tests {
         ]
     }
 
+    /// Required S3 env block (single chain) for tests where load+validate must succeed.
+    fn s3_required_env() -> [(&'static str, Option<&'static str>); 5] {
+        [
+            (
+                "NOX_OBSERVER_S3__CHAINS__421614__BUCKET",
+                Some("test-bucket"),
+            ),
+            (
+                "NOX_OBSERVER_S3__CHAINS__421614__ACCESS_KEY",
+                Some("test-access-key"),
+            ),
+            (
+                "NOX_OBSERVER_S3__CHAINS__421614__SECRET_KEY",
+                Some("test-secret-key"),
+            ),
+            ("NOX_OBSERVER_S3__CHAINS__421614__REGION", Some("us-east-1")),
+            ("NOX_OBSERVER_S3__CHAINS__421614__TIMEOUT", Some("30")),
+        ]
+    }
+
     #[test]
     fn load_returns_defaults_when_only_required_env_vars_set() {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
         vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
         temp_env::with_vars(vars, || {
             let config = Config::load().expect("should load");
             config.validate().expect("should validate");
@@ -181,6 +271,10 @@ mod tests {
             assert_eq!(10, config.nats.consumer_max_deliver);
             assert_eq!(10, config.nats.max_ack_pending);
             assert_eq!(10, config.nats.max_batch);
+            assert_eq!(10, config.s3.poll_interval_seconds);
+            assert_eq!(500, config.s3.batch_size);
+            assert_eq!(16, config.s3.max_concurrent_requests);
+            assert_eq!(1, config.s3.chains.len());
         });
     }
 
@@ -192,6 +286,7 @@ mod tests {
         ];
         vars.extend(required_non_nats_env());
         vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
         temp_env::with_vars(vars, || {
             let config = Config::load().expect("should load");
             config.validate().expect("should validate");
@@ -213,6 +308,7 @@ mod tests {
         let mut vars = vec![("NOX_OBSERVER_SERVER_FILE", Some(tmp_str.as_str()))];
         vars.extend(required_non_nats_env());
         vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
         temp_env::with_vars(vars, || {
             let config = Config::load().expect("should load");
             config.validate().expect("should validate");
@@ -226,6 +322,7 @@ mod tests {
     #[test]
     fn load_succeeds_validate_fails_when_nats_urls_empty() {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        vars.extend(s3_required_env());
         vars.extend([
             ("NOX_OBSERVER_NATS__TLS__ENABLED", Some("false")),
             ("NOX_OBSERVER_NATS__URLS", None::<&str>),
@@ -290,5 +387,118 @@ mod tests {
                 );
             },
         );
+    }
+
+    #[test]
+    fn s3_load_returns_defaults_when_only_required_chain_env_set() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            config.validate().expect("should validate");
+            assert_eq!(10, config.s3.poll_interval_seconds);
+            assert_eq!(500, config.s3.batch_size);
+            assert_eq!(16, config.s3.max_concurrent_requests);
+            let chain = config
+                .s3
+                .chains
+                .get("421614")
+                .expect("chain 421614 present");
+            assert_eq!("test-bucket", chain.bucket);
+            assert_eq!("us-east-1", chain.region);
+            assert_eq!(30, chain.timeout);
+            assert!(chain.endpoint_url.is_none());
+        });
+    }
+
+    #[test]
+    fn s3_chain_timeout_defaults_to_30_when_timeout_env_omitted() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        vars.extend(nats_required_env());
+        vars.extend([
+            (
+                "NOX_OBSERVER_S3__CHAINS__421614__BUCKET",
+                Some("test-bucket"),
+            ),
+            (
+                "NOX_OBSERVER_S3__CHAINS__421614__ACCESS_KEY",
+                Some("test-access-key"),
+            ),
+            (
+                "NOX_OBSERVER_S3__CHAINS__421614__SECRET_KEY",
+                Some("test-secret-key"),
+            ),
+            ("NOX_OBSERVER_S3__CHAINS__421614__REGION", Some("us-east-1")),
+        ]);
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load without TIMEOUT env");
+            config.validate().expect("should validate");
+            let chain = config
+                .s3
+                .chains
+                .get("421614")
+                .expect("chain 421614 present");
+            assert_eq!(30, chain.timeout);
+        });
+    }
+
+    #[test]
+    fn s3_parses_two_map_entries_when_two_chains_configured() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        vars.extend(nats_required_env());
+        vars.extend([
+            ("NOX_OBSERVER_S3__CHAINS__1__BUCKET", Some("bucket-chain-1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__ACCESS_KEY", Some("ak1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__SECRET_KEY", Some("sk1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__REGION", Some("eu-west-1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__TIMEOUT", Some("60")),
+            ("NOX_OBSERVER_S3__CHAINS__2__BUCKET", Some("bucket-chain-2")),
+            ("NOX_OBSERVER_S3__CHAINS__2__ACCESS_KEY", Some("ak2")),
+            ("NOX_OBSERVER_S3__CHAINS__2__SECRET_KEY", Some("sk2")),
+            ("NOX_OBSERVER_S3__CHAINS__2__REGION", Some("us-west-2")),
+            ("NOX_OBSERVER_S3__CHAINS__2__TIMEOUT", Some("45")),
+        ]);
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            config.validate().expect("should validate");
+            assert_eq!(2, config.s3.chains.len());
+            let c1 = config.s3.chains.get("1").expect("chain 1 present");
+            assert_eq!("bucket-chain-1", c1.bucket);
+            assert_eq!(60, c1.timeout);
+            let c2 = config.s3.chains.get("2").expect("chain 2 present");
+            assert_eq!("bucket-chain-2", c2.bucket);
+            assert_eq!(45, c2.timeout);
+        });
+    }
+
+    #[test]
+    fn s3_validate_returns_err_when_chains_empty() {
+        let s3 = S3Config {
+            chains: HashMap::new(),
+            poll_interval_seconds: 10,
+            batch_size: 500,
+            max_concurrent_requests: 16,
+        };
+        let result = s3.validate();
+        assert!(result.is_err(), "validate should reject empty s3.chains");
+    }
+
+    fn s3_chain_config_with_bucket(bucket: &str) -> S3ChainConfig {
+        S3ChainConfig {
+            endpoint_url: None,
+            bucket: bucket.to_string(),
+            access_key: "test-access-key".to_string(),
+            secret_key: "test-secret-key".to_string(),
+            region: "us-east-1".to_string(),
+            timeout: 30,
+        }
+    }
+
+    #[test]
+    fn s3_validate_returns_err_when_bucket_empty() {
+        let cfg = s3_chain_config_with_bucket("");
+        let result = cfg.validate();
+        assert!(result.is_err(), "validate should reject empty bucket");
     }
 }

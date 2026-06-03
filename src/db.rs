@@ -3,6 +3,7 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 
 const UPSERT_HANDLE_SQL: &str = include_str!("../sql/upsert_handle.sql");
 const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../sql/upsert_handle_parent.sql");
+const MARK_HANDLE_RESOLVED_SQL: &str = include_str!("../sql/mark_handle_resolved.sql");
 
 #[derive(Debug)]
 pub struct NewHandle {
@@ -78,6 +79,34 @@ impl Db {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    pub async fn fetch_unresolved_handles(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<(String, i32)>, sqlx::Error> {
+        let rows: Vec<(String, i32)> = sqlx::query_as(
+            "SELECT handle_id, chain_id
+             FROM handles
+             WHERE NOT processed_by_s3
+             ORDER BY block_timestamp NULLS FIRST
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn mark_resolved_by_s3(&self, handle_ids: &[String]) -> Result<u64, sqlx::Error> {
+        if handle_ids.is_empty() {
+            return Ok(0);
+        }
+        let result = sqlx::query(MARK_HANDLE_RESOLVED_SQL)
+            .bind(handle_ids)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 }
 

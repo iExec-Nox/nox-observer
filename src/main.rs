@@ -5,6 +5,7 @@ pub mod errors;
 pub mod events;
 pub mod handlers;
 pub mod nats;
+pub mod s3;
 pub mod subgraph;
 
 use tracing::{error, info};
