@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::NatsConfig;
 use crate::db::{Db, NewHandle};
 use crate::errors::ObserverError;
-use crate::events::{Operator, TransactionMessage};
+use crate::events::TransactionMessage;
 use crate::nats::client::{ConnectionState, NatsClient};
 
 pub struct NatsConsumer {
@@ -96,73 +96,7 @@ impl NatsConsumer {
                         break;
                     };
                     match message {
-                        Ok(msg) => {
-                            let tx_msg: TransactionMessage = match serde_json::from_slice(&msg.payload) {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    error!(error = %e, "deserialize failed; ACK-discarding poison payload");
-                                    if let Err(ack_err) = msg.ack().await {
-                                        error!(error = %ack_err, "ACK after deserialize-fail failed");
-                                    }
-                                    continue;
-                                }
-                            };
-
-                            let handles = match extract_handles(&tx_msg) {
-                                Ok(h) => h,
-                                Err(e) => {
-                                    error!(
-                                        error = %e,
-                                        chain_id = tx_msg.chain_id,
-                                        tx_hash = tx_msg.transaction_hash,
-                                        "extract_handles failed; ACK-discarding"
-                                    );
-                                    if let Err(ack_err) = msg.ack().await {
-                                        error!(error = %ack_err, "ACK after extract-fail failed");
-                                    }
-                                    continue;
-                                }
-                            };
-
-                            // A message carrying no extractable handles (e.g. empty
-                            // `events`) has nothing to persist, so ACK it directly and skip
-                            // the empty begin/commit round-trip.
-                            if handles.is_empty() {
-                                if let Err(ack_err) = msg.ack().await {
-                                    error!(error = %ack_err, "ACK after empty-extract failed");
-                                }
-                                continue;
-                            }
-
-                            match self.db.upsert_handles_in_tx(&handles).await {
-                                Ok(_) => {
-                                    if let Err(ack_err) = msg.ack().await {
-                                        error!(
-                                            error = %ack_err,
-                                            tx_hash = tx_msg.transaction_hash,
-                                            "ACK failed after successful upsert"
-                                        );
-                                    } else {
-                                        debug!(
-                                            tx_hash = tx_msg.transaction_hash,
-                                            handles = handles.len(),
-                                            "ACK after successful upsert"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    // 2-tier ack: omit ack on DB error → JetStream redelivers
-                                    // after ack_wait, up to max_deliver, then drops. No NAK
-                                    // (NAK would force immediate redelivery; ack_wait is the
-                                    // safer pacing).
-                                    error!(
-                                        error = %e,
-                                        tx_hash = tx_msg.transaction_hash,
-                                        "DB upsert failed; no-ack (JetStream will redeliver)"
-                                    );
-                                }
-                            }
-                        }
+                        Ok(msg) => self.process_message(msg).await,
                         Err(e) => {
                             let kind = classify_pull_error(&e);
                             error!(error = %e, kind, "NATS pull error");
@@ -172,6 +106,79 @@ impl NatsConsumer {
             }
         }
         Ok(())
+    }
+
+    /// Process one delivered message end to end: deserialize, extract handles,
+    /// persist in a single transaction, then ack.
+    ///
+    /// Follows the 2-tier ack policy: poison payloads (deserialize or extract
+    /// failures) are ack-discarded, while DB errors are left un-acked so
+    /// JetStream redelivers.
+    async fn process_message(&self, msg: jetstream::Message) {
+        let tx_msg: TransactionMessage = match serde_json::from_slice(&msg.payload) {
+            Ok(v) => v,
+            Err(e) => {
+                error!(error = %e, "deserialize failed; ACK-discarding poison payload");
+                if let Err(ack_err) = msg.ack().await {
+                    error!(error = %ack_err, "ACK after deserialize-fail failed");
+                }
+                return;
+            }
+        };
+
+        let handles = match extract_handles(&tx_msg) {
+            Ok(h) => h,
+            Err(e) => {
+                error!(
+                    error = %e,
+                    chain_id = tx_msg.chain_id,
+                    tx_hash = tx_msg.transaction_hash,
+                    "extract_handles failed; ACK-discarding"
+                );
+                if let Err(ack_err) = msg.ack().await {
+                    error!(error = %ack_err, "ACK after extract-fail failed");
+                }
+                return;
+            }
+        };
+
+        // A message carrying no extractable handles (e.g. empty `events`) has
+        // nothing to persist, so ACK it directly and skip the empty begin/commit
+        // round-trip.
+        if handles.is_empty() {
+            if let Err(ack_err) = msg.ack().await {
+                error!(error = %ack_err, "ACK after empty-extract failed");
+            }
+            return;
+        }
+
+        match self.db.upsert_handles_in_tx(&handles).await {
+            Ok(_) => {
+                if let Err(ack_err) = msg.ack().await {
+                    error!(
+                        error = %ack_err,
+                        tx_hash = tx_msg.transaction_hash,
+                        "ACK failed after successful upsert"
+                    );
+                } else {
+                    debug!(
+                        tx_hash = tx_msg.transaction_hash,
+                        handles = handles.len(),
+                        "ACK after successful upsert"
+                    );
+                }
+            }
+            Err(e) => {
+                // 2-tier ack: omit ack on DB error → JetStream redelivers after
+                // ack_wait, up to max_deliver, then drops. No NAK (NAK would force
+                // immediate redelivery; ack_wait is the safer pacing).
+                error!(
+                    error = %e,
+                    tx_hash = tx_msg.transaction_hash,
+                    "DB upsert failed; no-ack (JetStream will redeliver)"
+                );
+            }
+        }
     }
 }
 
@@ -218,42 +225,10 @@ fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, ObserverE
         });
     };
 
-    for ev in &msg.events {
-        let tag = ev.operator.wire_tag();
-        match &ev.operator {
-            Operator::WrapAsPublicHandle(op) => push(&mut out, &op.handle, tag),
-            Operator::Add(op) | Operator::Sub(op) | Operator::Mul(op) | Operator::Div(op) => {
-                push(&mut out, &op.result, tag)
-            }
-            Operator::SafeAdd(op)
-            | Operator::SafeSub(op)
-            | Operator::SafeMul(op)
-            | Operator::SafeDiv(op) => {
-                push(&mut out, &op.success, tag);
-                push(&mut out, &op.result, tag);
-            }
-            Operator::Eq(op)
-            | Operator::Ne(op)
-            | Operator::Ge(op)
-            | Operator::Gt(op)
-            | Operator::Le(op)
-            | Operator::Lt(op) => push(&mut out, &op.result, tag),
-            Operator::Select(op) => push(&mut out, &op.result, tag),
-            Operator::Transfer(op) => {
-                push(&mut out, &op.success, tag);
-                push(&mut out, &op.new_balance_from, tag);
-                push(&mut out, &op.new_balance_to, tag);
-            }
-            Operator::Mint(op) => {
-                push(&mut out, &op.success, tag);
-                push(&mut out, &op.new_balance_to, tag);
-                push(&mut out, &op.new_total_supply, tag);
-            }
-            Operator::Burn(op) => {
-                push(&mut out, &op.success, tag);
-                push(&mut out, &op.new_balance_from, tag);
-                push(&mut out, &op.new_total_supply, tag);
-            }
+    for event in &msg.events {
+        let operator_tag = event.operator.wire_tag();
+        for handle_id in event.operator.emitted_handles() {
+            push(&mut out, handle_id, operator_tag);
         }
     }
     Ok(out)

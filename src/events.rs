@@ -1,9 +1,5 @@
 //! Structs to deserialize received [`TransactionMessage`]s from the
 //! `nox_ingestor` NATS JetStream stream.
-//!
-//! Types are duplicated locally per ADR #2067 (nox-ingestor and nox-runner are
-//! binary-only crates with no `[lib]`; cross-repo crate sharing was rejected
-//! given the small surface). Field shapes mirror `nox-runner/src/events.rs`.
 
 use alloy_primitives::Address;
 use serde::Deserialize;
@@ -96,7 +92,7 @@ pub struct BurnOperation {
 }
 
 /// Event payload with typed variants. The wire tag is the snake_case form of
-/// the variant name (`add`, `safe_add`, `wrap_as_public_handle`, ...) — see
+/// the variant name (`add`, `safe_add`, `wrap_as_public_handle`, ...), see
 /// [`Operator::wire_tag`] for the canonical mapping used when writing to the
 /// `handles.operator` DB column.
 #[derive(Debug, Deserialize)]
@@ -124,7 +120,7 @@ pub enum Operator {
 }
 
 impl Operator {
-    /// Snake-case wire tag — the canonical string written to `handles.operator`.
+    /// Snake-case wire tag, the canonical string written to `handles.operator`.
     /// Matches `#[serde(rename_all = "snake_case", tag = "type")]` exactly.
     pub fn wire_tag(&self) -> &'static str {
         match self {
@@ -149,6 +145,33 @@ impl Operator {
             Operator::Burn(_) => "burn",
         }
     }
+
+    /// Handle ids this operator emits (writes), in deterministic order.
+    ///
+    /// These are the values persisted to `handles.handle_id`; operand and input
+    /// handles are not included, and a single operator may emit several.
+    pub fn emitted_handles(&self) -> Vec<&str> {
+        match self {
+            Operator::WrapAsPublicHandle(op) => vec![&op.handle],
+            Operator::Add(op) | Operator::Sub(op) | Operator::Mul(op) | Operator::Div(op) => {
+                vec![&op.result]
+            }
+            Operator::SafeAdd(op)
+            | Operator::SafeSub(op)
+            | Operator::SafeMul(op)
+            | Operator::SafeDiv(op) => vec![&op.success, &op.result],
+            Operator::Eq(op)
+            | Operator::Ne(op)
+            | Operator::Ge(op)
+            | Operator::Gt(op)
+            | Operator::Le(op)
+            | Operator::Lt(op) => vec![&op.result],
+            Operator::Select(op) => vec![&op.result],
+            Operator::Transfer(op) => vec![&op.success, &op.new_balance_from, &op.new_balance_to],
+            Operator::Mint(op) => vec![&op.success, &op.new_balance_to, &op.new_total_supply],
+            Operator::Burn(op) => vec![&op.success, &op.new_balance_from, &op.new_total_supply],
+        }
+    }
 }
 
 /// Individual event within a transaction.
@@ -170,7 +193,7 @@ pub struct TransactionMessage {
     pub chain_id: u32,
     /// Block number.
     pub block_number: u64,
-    /// Caller address (top-level — applies to every event in the tx).
+    /// Caller address (top-level, applies to every event in the tx).
     pub caller: Address,
     /// Transaction hash.
     pub transaction_hash: String,
@@ -182,7 +205,7 @@ pub struct TransactionMessage {
 mod tests {
     use super::*;
 
-    // Shared test constants — TransactionMessage envelope fields
+    // TransactionMessage envelope fields
     const TEST_CHAIN_ID: u32 = 1;
     const TEST_BLOCK_NUMBER: u64 = 10;
     const TEST_CALLER: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cfFFb92266";
@@ -318,6 +341,37 @@ mod tests {
             .wire_tag(),
             "burn"
         );
+    }
+
+    //  emitted_handles
+
+    #[test]
+    fn emitted_handles_returns_result_only_when_operator_is_arithmetic() {
+        assert_eq!(
+            Operator::Add(make_arith()).emitted_handles(),
+            vec![HANDLE_RES]
+        );
+    }
+
+    #[test]
+    fn emitted_handles_returns_success_then_result_when_operator_is_safe_arithmetic() {
+        assert_eq!(
+            Operator::SafeAdd(make_safe_arith()).emitted_handles(),
+            vec![HANDLE_SUCCESS, HANDLE_RES]
+        );
+    }
+
+    #[test]
+    fn emitted_handles_returns_three_balances_in_order_when_operator_is_transfer() {
+        let op = Operator::Transfer(TransferOperation {
+            balance_from: HANDLE_1.into(),
+            balance_to: HANDLE_2.into(),
+            amount: HANDLE_3.into(),
+            success: HANDLE_4.into(),
+            new_balance_from: HANDLE_5.into(),
+            new_balance_to: HANDLE_6.into(),
+        });
+        assert_eq!(op.emitted_handles(), vec![HANDLE_4, HANDLE_5, HANDLE_6]);
     }
 
     //  Deserialize
