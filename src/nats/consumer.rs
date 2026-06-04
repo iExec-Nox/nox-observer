@@ -1,8 +1,9 @@
-//! NATS JetStream consumer — pull loop, 2-tier ack, handle extraction.
+//! NATS JetStream consumer, pull loop, 2-tier ack, handle extraction.
 //!
 //! Pull-loop topology:
 //! - one PG transaction per NATS message via `Db::upsert_handles_in_tx`
-//! - 2-tier ack: ACK on success / ACK on serde-fail or chain_id overflow / no-ack on DB error
+//! - 2-tier ack: ACK on success / ACK on serde-fail or extract failure
+//!   (chain_id or block_number overflow) / no-ack on DB error
 //! - extracts handles per operator variant before upserting
 
 use async_nats::jetstream;
@@ -75,20 +76,25 @@ impl NatsConsumer {
             tokio::select! {
                 result = state_rx.changed() => {
                     if result.is_err() {
-                        warn!("NATS state watch channel closed — exiting consumer loop");
+                        warn!("NATS state watch channel closed. Exiting consumer loop");
                         break;
                     }
                     let new_state = *state_rx.borrow();
                     let was_connected = connected;
                     connected = new_state == ConnectionState::Connected;
                     match (was_connected, connected) {
-                        (false, true) => info!("NATS reconnected — resuming pull loop"),
-                        (true, false) => warn!("NATS disconnected — pausing pull loop"),
+                        (false, true) => info!("NATS reconnected. Resuming pull loop"),
+                        (true, false) => warn!("NATS disconnected. Pausing pull loop"),
                         _ => {}
                     }
                 }
 
-                Some(message) = subscriber.next(), if connected => {
+                maybe_message = subscriber.next(), if connected => {
+                    // Exit if `None` because it means the JetStream message stream terminated
+                    let Some(message) = maybe_message else {
+                        warn!("NATS message stream ended; exiting consumer loop");
+                        break;
+                    };
                     match message {
                         Ok(msg) => {
                             let tx_msg: TransactionMessage = match serde_json::from_slice(&msg.payload) {
@@ -169,12 +175,15 @@ impl NatsConsumer {
     }
 }
 
-/// Map a `TransactionMessage` to one [`NewHandle`] per emitted handle. All rows
-/// in the returned `Vec` share `(chain_id, caller, tx_hash, block_number,
-/// operator)`; only `handle_id` differs.
+/// Map a `TransactionMessage` to one [`NewHandle`] per emitted handle. Every row
+/// shares the transaction-level metadata `(chain_id, caller, tx_hash,
+/// block_number)`; `operator` is the per-event wire tag and `handle_id` is
+/// per emitted handle, a single event may emit several rows, and `operator`
+/// varies across events.
 ///
-/// Returns `Err(ObserverError::Nats(_))` when `chain_id` overflows i32 (treated
-/// as poison: ACK-discarded by the caller).
+/// Returns `Err(ObserverError::Nats(_))` when `chain_id` overflows i32 or
+/// `block_number` overflows i64 (both treated as poison: ACK-discarded by the
+/// caller).
 fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, ObserverError> {
     let chain_id_i32 = i32::try_from(msg.chain_id).map_err(|_| {
         ObserverError::Nats(format!(
@@ -301,8 +310,10 @@ mod tests {
         make_tx_message_json_with_chain_id(u64::from(TEST_CHAIN_ID), events_json)
     }
 
-    /// Variant used by the overflow test (u64 widens to accept u32::MAX or
-    /// any larger value the test wants to probe).
+    /// Takes `chain_id` as `u64` only so the overflow test can pass `u32::MAX`
+    /// literally. The boundary under test is the `i32` narrowing inside
+    /// `extract_handles`, NOT JSON→u32 parsing: a `chainId` above `u32::MAX`
+    /// would fail to deserialize into the u32 field before `extract_handles` runs.
     fn make_tx_message_json_with_chain_id(chain_id: u64, events_json: &str) -> String {
         format!(
             r#"{{
