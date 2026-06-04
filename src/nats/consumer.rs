@@ -7,7 +7,7 @@
 
 use async_nats::jetstream;
 use futures_util::StreamExt;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::NatsConfig;
 use crate::db::{Db, NewHandle};
@@ -15,13 +15,13 @@ use crate::errors::ObserverError;
 use crate::events::{Operator, TransactionMessage};
 use crate::nats::client::{ConnectionState, NatsClient};
 
-pub struct Consumer {
+pub struct NatsConsumer {
     nats_client: NatsClient,
     db: Db,
     config: NatsConfig,
 }
 
-impl Consumer {
+impl NatsConsumer {
     pub fn new(nats_client: NatsClient, db: Db, config: NatsConfig) -> Self {
         Self {
             nats_client,
@@ -73,11 +73,6 @@ impl Consumer {
 
         loop {
             tokio::select! {
-                _ = shutdown_signal() => {
-                    info!("NATS consumer received shutdown signal, exiting gracefully");
-                    break;
-                }
-
                 result = state_rx.changed() => {
                     if result.is_err() {
                         warn!("NATS state watch channel closed — exiting consumer loop");
@@ -123,6 +118,16 @@ impl Consumer {
                                 }
                             };
 
+                            // A message carrying no extractable handles (e.g. empty
+                            // `events`) has nothing to persist, so ACK it directly and skip
+                            // the empty begin/commit round-trip.
+                            if handles.is_empty() {
+                                if let Err(ack_err) = msg.ack().await {
+                                    error!(error = %ack_err, "ACK after empty-extract failed");
+                                }
+                                continue;
+                            }
+
                             match self.db.upsert_handles_in_tx(&handles).await {
                                 Ok(_) => {
                                     if let Err(ack_err) = msg.ack().await {
@@ -132,7 +137,7 @@ impl Consumer {
                                             "ACK failed after successful upsert"
                                         );
                                     } else {
-                                        info!(
+                                        debug!(
                                             tx_hash = tx_msg.transaction_hash,
                                             handles = handles.len(),
                                             "ACK after successful upsert"
@@ -140,10 +145,10 @@ impl Consumer {
                                     }
                                 }
                                 Err(e) => {
-                                    // 2-tier ack (spec §2.G, mirrors runner): omit ack on DB
-                                    // error → JetStream redelivers after ack_wait, up to
-                                    // max_deliver, then drops. No NAK (NAK would force
-                                    // immediate redelivery; ack_wait is the safer pacing).
+                                    // 2-tier ack: omit ack on DB error → JetStream redelivers
+                                    // after ack_wait, up to max_deliver, then drops. No NAK
+                                    // (NAK would force immediate redelivery; ack_wait is the
+                                    // safer pacing).
                                     error!(
                                         error = %e,
                                         tx_hash = tx_msg.transaction_hash,
@@ -164,14 +169,13 @@ impl Consumer {
     }
 }
 
-/// Map a `TransactionMessage` to one [`NewHandle`] per emitted handle, per the
-/// extraction table in the design spec (§3). All rows in the returned `Vec`
-/// share `(chain_id, caller, tx_hash, block_number, operator)`; only
-/// `handle_id` differs.
+/// Map a `TransactionMessage` to one [`NewHandle`] per emitted handle. All rows
+/// in the returned `Vec` share `(chain_id, caller, tx_hash, block_number,
+/// operator)`; only `handle_id` differs.
 ///
 /// Returns `Err(ObserverError::Nats(_))` when `chain_id` overflows i32 (treated
 /// as poison: ACK-discarded by the caller).
-pub(crate) fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, ObserverError> {
+fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, ObserverError> {
     let chain_id_i32 = i32::try_from(msg.chain_id).map_err(|_| {
         ObserverError::Nats(format!(
             "chain_id {} does not fit in i32 (handles.chain_id is INT)",
@@ -246,8 +250,8 @@ pub(crate) fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>
     Ok(out)
 }
 
-/// Pasted from `nox-runner/src/application.rs:226-238` verbatim. Used as a
-/// tracing-field label only (no metric emit until spec §2.J is undone).
+/// Classify an `async_nats` pull error by its message text, for use as a
+/// tracing-field label only.
 fn classify_pull_error<E: std::fmt::Display>(e: &E) -> &'static str {
     let s = e.to_string().to_lowercase();
     if s.contains("timed out") || s.contains("timeout") {
@@ -259,32 +263,6 @@ fn classify_pull_error<E: std::fmt::Display>(e: &E) -> &'static str {
     } else {
         "other"
     }
-}
-
-/// Pasted from `nox-runner/src/application.rs:240-261` verbatim. Per-task
-/// shutdown listener inside the consumer loop, separate from axum's
-/// `with_graceful_shutdown` so in-flight messages are fully ack'd before exit.
-#[cfg(unix)]
-async fn shutdown_signal() {
-    use tokio::signal::unix::{SignalKind, signal};
-    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
-
-    tokio::select! {
-        _ = sigterm.recv() => {
-            info!("Received SIGTERM");
-        }
-        _ = sigint.recv() => {
-            info!("Received SIGINT");
-        }
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to install Ctrl+C handler");
 }
 
 #[cfg(test)]

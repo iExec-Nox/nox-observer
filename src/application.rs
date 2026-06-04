@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::Config;
 use crate::db::Db;
 use crate::handlers;
-use crate::nats::{Consumer, NatsClient};
+use crate::nats::{NatsClient, NatsConsumer};
 use crate::subgraph::{Poller, SubgraphClient};
 
 #[derive(Clone)]
@@ -32,7 +32,7 @@ pub struct Application {
     state: AppState,
     prometheus_layer: PrometheusMetricLayer<'static>,
     poller: Poller,
-    consumer: Consumer,
+    nats_consumer: NatsConsumer,
 }
 
 impl Application {
@@ -67,15 +67,15 @@ impl Application {
 
         let nats_client = NatsClient::connect(&config.nats)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize NATS client: {e}"))?;
-        let consumer = Consumer::new(nats_client, db, config.nats.clone());
+            .context("initializing NATS client")?;
+        let nats_consumer = NatsConsumer::new(nats_client, db, config.nats.clone());
 
         Ok(Self {
             config,
             state: AppState { metrics_handle },
             prometheus_layer,
             poller,
-            consumer,
+            nats_consumer,
         })
     }
 
@@ -102,7 +102,7 @@ impl Application {
         info!("Server bound to {}", addr);
 
         let poller = self.poller;
-        let consumer = self.consumer;
+        let nats_consumer = self.nats_consumer;
         let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
         tokio::select! {
@@ -110,7 +110,7 @@ impl Application {
                 error!("subgraph poller exited; bringing observer down");
                 res.context("subgraph poller failed")?;
             }
-            res = consumer.run() => {
+            res = nats_consumer.run() => {
                 error!("nats consumer exited; bringing observer down");
                 res.context("nats consumer failed")?;
             }
