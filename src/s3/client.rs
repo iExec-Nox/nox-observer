@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 use tracing::warn;
 
 use crate::config::{S3ChainConfig, S3Config};
-use crate::errors::ObserverError;
+use crate::errors::S3ResolverError;
 
 pub struct ChainBucket {
     client: Client,
@@ -21,19 +21,20 @@ pub struct ChainBucket {
 
 pub struct S3Client {
     chains: HashMap<i32, ChainBucket>,
+    /// Shared across all chains, caps in-flight S3 operations globally.
     semaphore: Arc<Semaphore>,
     /// Chain IDs already warned about (no configured bucket)
     warned_chains: Mutex<HashSet<i32>>,
 }
 
 impl S3Client {
-    pub async fn new(config: &S3Config) -> Result<Self, ObserverError> {
+    pub async fn new(config: &S3Config) -> Result<Self, S3ResolverError> {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_requests));
         let mut chains = HashMap::with_capacity(config.chains.len());
 
         for (key, chain_cfg) in &config.chains {
             let chain_id = key.parse::<i32>().map_err(|_| {
-                ObserverError::S3(format!(
+                S3ResolverError::S3(format!(
                     "invalid chain_id key in s3.chains: '{key}' is not a valid i32"
                 ))
             })?;
@@ -57,9 +58,9 @@ impl S3Client {
         ids
     }
 
-    pub async fn handle_exists(&self, chain_id: i32, key: &str) -> Result<bool, ObserverError> {
+    pub async fn handle_exists(&self, chain_id: i32, key: &str) -> Result<bool, S3ResolverError> {
         let chain_bucket = self.chains.get(&chain_id).ok_or_else(|| {
-            ObserverError::S3(format!("no S3 bucket configured for chain_id {chain_id}"))
+            S3ResolverError::S3(format!("no S3 bucket configured for chain_id {chain_id}"))
         })?;
 
         match chain_bucket
@@ -72,14 +73,29 @@ impl S3Client {
         {
             Ok(_) => Ok(true),
             Err(e) => {
-                if let SdkError::ServiceError(ref se) = e
-                    && se.raw().status().as_u16() == 404
-                {
-                    return Ok(false);
-                }
-                Err(ObserverError::S3(format!(
-                    "head_object failed for chain {chain_id} key '{key}': {e}"
-                )))
+                // Classify from the typed SDK error: a missing object is a clean
+                // "not present", 5xx and network/timeout failures are transient
+                // (worth retrying next tick), everything else (4xx auth, malformed
+                // request) is permanent.
+                let transient = match &e {
+                    SdkError::ServiceError(se) => {
+                        let status = se.raw().status().as_u16();
+                        if status == 404 {
+                            return Ok(false);
+                        }
+                        status >= 500
+                    }
+                    SdkError::TimeoutError(_)
+                    | SdkError::DispatchFailure(_)
+                    | SdkError::ResponseError(_) => true,
+                    _ => false,
+                };
+                let msg = format!("head_object failed for chain {chain_id} key '{key}': {e}");
+                Err(if transient {
+                    S3ResolverError::S3Transient(msg)
+                } else {
+                    S3ResolverError::S3(msg)
+                })
             }
         }
     }
@@ -87,7 +103,7 @@ impl S3Client {
     pub async fn filter_present(
         &self,
         candidates: &[(String, i32)],
-    ) -> Result<Vec<String>, ObserverError> {
+    ) -> Result<Vec<String>, S3ResolverError> {
         let configured_chains: HashSet<i32> = self.chains.keys().copied().collect();
 
         let filtered: Vec<(String, i32)> = candidates
@@ -103,8 +119,10 @@ impl S3Client {
             .cloned()
             .collect();
 
+        // Dispatch HEADs concurrently, throttled by the shared semaphore that
+        // caps in-flight S3 operations across all chains.
         let client = self;
-        let results: Vec<Result<Option<String>, ObserverError>> = join_all(
+        let results: Vec<Result<Option<String>, S3ResolverError>> = join_all(
             filtered
                 .into_iter()
                 .map(|(handle_id, chain_id)| async move {
@@ -112,11 +130,11 @@ impl S3Client {
                         .semaphore
                         .acquire()
                         .await
-                        .map_err(|e| ObserverError::S3(format!("semaphore error: {e}")))?;
+                        .map_err(|e| S3ResolverError::S3(format!("semaphore error: {e}")))?;
                     client
                         .handle_exists(chain_id, &handle_id)
                         .await
-                        .map(|exists| if exists { Some(handle_id) } else { None })
+                        .map(|exists| exists.then_some(handle_id))
                 }),
         )
         .await;
@@ -143,7 +161,7 @@ impl S3Client {
     }
 }
 
-async fn build_chain_bucket(config: &S3ChainConfig) -> Result<ChainBucket, ObserverError> {
+async fn build_chain_bucket(config: &S3ChainConfig) -> Result<ChainBucket, S3ResolverError> {
     let credentials =
         Credentials::new(&config.access_key, &config.secret_key, None, None, "static");
 
@@ -173,7 +191,10 @@ async fn build_chain_bucket(config: &S3ChainConfig) -> Result<ChainBucket, Obser
     })
 }
 
-async fn validate_bucket(chain_bucket: &ChainBucket, chain_key: &str) -> Result<(), ObserverError> {
+async fn validate_bucket(
+    chain_bucket: &ChainBucket,
+    chain_key: &str,
+) -> Result<(), S3ResolverError> {
     chain_bucket
         .client
         .head_bucket()
@@ -181,7 +202,7 @@ async fn validate_bucket(chain_bucket: &ChainBucket, chain_key: &str) -> Result<
         .send()
         .await
         .map_err(|e| {
-            ObserverError::S3(format!(
+            S3ResolverError::S3(format!(
                 "S3 bucket '{}' for chain '{}' is not accessible: {}",
                 chain_bucket.bucket,
                 chain_key,
@@ -242,10 +263,10 @@ mod tests {
         let result = rt.block_on(S3Client::new(&config));
         assert!(result.is_err());
         match result {
-            Err(ObserverError::S3(ref msg)) => {
+            Err(S3ResolverError::S3(ref msg)) => {
                 assert!(msg.contains("not-a-number"), "unexpected message: {msg}");
             }
-            _ => panic!("expected ObserverError::S3"),
+            _ => panic!("expected S3ResolverError::S3"),
         }
     }
 }

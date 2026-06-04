@@ -38,6 +38,9 @@ impl S3Resolver {
 
         loop {
             ticker.tick().await;
+            // Errors never break the loop: the next tick is the natural retry.
+            // Transient failures (network, 5xx) log at warn, permanent ones at
+            // error so a misconfiguration stays visible without halting the loop.
             if let Err(e) = self.resolve_once().await {
                 if e.is_transient() {
                     warn!("s3 resolve tick failed (transient): {e}");
@@ -53,18 +56,14 @@ impl S3Resolver {
         if candidates.is_empty() {
             return Ok(());
         }
-        let present = self
-            .s3
-            .filter_present(&candidates)
-            .await
-            .map_err(|e| S3ResolverError::S3(e.to_string()))?;
+        let present = self.s3.filter_present(&candidates).await?;
         if present.is_empty() {
             return Ok(());
         }
         let n = self.db.mark_resolved_by_s3(&present).await?;
         info!(
             resolved = n,
-            candidates = candidates.len(),
+            fetched = candidates.len(),
             "s3 resolver marked handles resolved"
         );
         Ok(())

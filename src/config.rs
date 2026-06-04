@@ -93,9 +93,10 @@ fn validate_nats_urls(urls: &Vec<String>) -> Result<(), ValidationError> {
 ///
 /// `chains` maps chain IDs (as strings, because the `config` crate lowercases
 /// env keys and deserializes map keys as strings) to per-chain S3 settings.
-/// The downstream consumer converts them to `u64` chain IDs as needed.
-/// Chosen over `HashMap<u64, _>` because the config crate 0.15.x produces
-/// string-typed map keys from env, causing a u64 deserialization failure.
+/// The downstream consumer parses them into `i32` chain IDs, matching the
+/// `INT` `chain_id` column on the `handles` table. Chosen over `HashMap<i32, _>`
+/// because the config crate produces string-typed map keys from env, causing an
+/// integer deserialization failure.
 ///
 /// `Serialize` is required (unlike sibling config structs): `validator` 0.20's
 /// derive on the `#[validate(nested)]` `HashMap` field emits a bound requiring
@@ -118,7 +119,10 @@ pub struct S3Config {
 ///
 /// `access_key`, `secret_key`, `bucket`, and `region` are required (no defaults).
 /// `timeout` defaults to 30 seconds.
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+///
+/// `Debug` is implemented manually to keep `access_key` and `secret_key` out of
+/// log and panic output.
+#[derive(Clone, Serialize, Deserialize, Validate)]
 pub struct S3ChainConfig {
     /// Optional custom endpoint for S3-compatible backends (e.g. MinIO). When unset, the AWS SDK uses standard regional endpoints.
     #[validate(url)]
@@ -132,8 +136,21 @@ pub struct S3ChainConfig {
     #[validate(length(min = 1))]
     pub region: String,
     #[serde(default = "default_s3_timeout")]
-    #[validate(range(min = 1))]
+    #[validate(range(min = 1, max = 300))]
     pub timeout: u64,
+}
+
+impl std::fmt::Debug for S3ChainConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3ChainConfig")
+            .field("endpoint_url", &self.endpoint_url)
+            .field("bucket", &self.bucket)
+            .field("access_key", &"<redacted>")
+            .field("secret_key", &"<redacted>")
+            .field("region", &self.region)
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 fn default_s3_timeout() -> u64 {
