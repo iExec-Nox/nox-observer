@@ -1,9 +1,4 @@
 //! NATS client with JetStream support — consumer-only surface.
-//!
-//! Pasted from `nox-ingestor/src/nats/client.rs` (verbatim except: dropped
-//! publisher-only `setup_stream`/`state`/`is_connected`; swapped error type
-//! `NatsError` → `ObserverError::Nats`; renamed env-var labels in error
-//! messages from `NOX_INGESTOR_*` to `NOX_OBSERVER_*`).
 
 use async_nats::jetstream::{self, Context as JetStreamContext};
 use async_nats::rustls::pki_types::pem::PemObject;
@@ -22,15 +17,6 @@ use crate::errors::ObserverError;
 pub enum ConnectionState {
     Connected,
     Disconnected,
-}
-
-impl std::fmt::Display for ConnectionState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConnectionState::Connected => write!(f, "Connected"),
-            ConnectionState::Disconnected => write!(f, "Disconnected"),
-        }
-    }
 }
 
 /// NATS client with JetStream support
