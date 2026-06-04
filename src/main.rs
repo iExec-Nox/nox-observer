@@ -4,6 +4,7 @@ pub mod db;
 pub mod errors;
 pub mod events;
 pub mod handlers;
+pub mod nats;
 pub mod subgraph;
 
 use tracing::{error, info};
@@ -22,6 +23,10 @@ async fn main() -> anyhow::Result<()> {
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    async_nats::rustls::crypto::ring::default_provider()
+        .install_default()
+        .unwrap_or_else(|_| error!("Failed to install rustls ring crypto provider"));
 
     let config = Config::load().inspect_err(|e| error!("Failed to load configuration: {e}"))?;
     config
