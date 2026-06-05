@@ -24,9 +24,13 @@ CREATE TABLE handles (
 -- Every API query filters by chain_id
 CREATE INDEX idx_handles_chain_id ON handles (chain_id);
 
--- Hot path of the s3_resolver: scan unresolved handles oldest-first. Partial
--- index keeps it small (shrinks as handles resolve) and supports both the
--- `WHERE NOT processed_by_s3` filter and the `ORDER BY block_timestamp` sort.
+-- Hot path of the s3_resolver: scan unresolved handles oldest-first. The partial
+-- predicate keeps the index small (it shrinks as handles resolve) and serves the
+-- `WHERE NOT processed_by_s3` filter. A plain btree column defaults to NULLS LAST,
+-- matching the query's `ORDER BY block_timestamp`, so the LIMIT is served by an
+-- ordered index scan instead of sorting the whole unresolved set on each tick.
+-- Rows without a block_timestamp (subgraph has not confirmed the block yet, so the
+-- ciphertext is less likely uploaded) sort last and resolve once they are timestamped.
 CREATE INDEX idx_handles_unresolved ON handles (block_timestamp) WHERE NOT processed_by_s3;
 
 -- Junction table for parent-child relationships between handles.

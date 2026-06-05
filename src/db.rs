@@ -89,7 +89,7 @@ impl Db {
             "SELECT handle_id, chain_id
              FROM handles
              WHERE NOT processed_by_s3
-             ORDER BY block_timestamp NULLS FIRST
+             ORDER BY block_timestamp
              LIMIT $1",
         )
         .bind(limit)
