@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use aws_sdk_s3::{
@@ -7,6 +7,7 @@ use aws_sdk_s3::{
     config::{Builder, Credentials, timeout::TimeoutConfig},
     error::SdkError,
 };
+use chrono::{DateTime, Utc};
 use futures_util::future::join_all;
 use tokio::sync::Semaphore;
 use tracing::warn;
@@ -23,8 +24,6 @@ pub struct S3Client {
     chains: HashMap<i32, ChainBucket>,
     /// Shared across all chains, caps in-flight S3 operations globally.
     semaphore: Arc<Semaphore>,
-    /// Chain IDs already warned about (no configured bucket)
-    warned_chains: Mutex<HashSet<i32>>,
 }
 
 impl S3Client {
@@ -44,11 +43,7 @@ impl S3Client {
             chains.insert(chain_id, chain_bucket);
         }
 
-        Ok(Self {
-            chains,
-            semaphore,
-            warned_chains: Mutex::new(HashSet::new()),
-        })
+        Ok(Self { chains, semaphore })
     }
 
     /// Chain IDs that have a configured bucket, for startup diagnostics.
@@ -58,7 +53,13 @@ impl S3Client {
         ids
     }
 
-    pub async fn handle_exists(&self, chain_id: i32, key: &str) -> Result<bool, S3ResolverError> {
+    /// Returns the object's `LastModified` (when the ciphertext landed in S3)
+    /// when present, `None` on a clean 404.
+    pub async fn handle_exists(
+        &self,
+        chain_id: i32,
+        key: &str,
+    ) -> Result<Option<DateTime<Utc>>, S3ResolverError> {
         let chain_bucket = self.chains.get(&chain_id).ok_or_else(|| {
             S3ResolverError::S3(format!("no S3 bucket configured for chain_id {chain_id}"))
         })?;
@@ -71,7 +72,23 @@ impl S3Client {
             .send()
             .await
         {
-            Ok(_) => Ok(true),
+            Ok(out) => {
+                // S3 always returns LastModified for an existing object; if it is
+                // absent or out of range, the object is still present, so resolve
+                // it with a now() fallback rather than dropping it.
+                let resolved_at = out
+                    .last_modified()
+                    .and_then(smithy_to_chrono)
+                    .unwrap_or_else(|| {
+                        warn!(
+                            chain_id,
+                            key,
+                            "head_object returned no usable LastModified; falling back to now()"
+                        );
+                        Utc::now()
+                    });
+                Ok(Some(resolved_at))
+            }
             Err(e) => {
                 // Classify from the typed SDK error: a missing object is a clean
                 // "not present", 5xx and network/timeout failures are transient
@@ -81,7 +98,7 @@ impl S3Client {
                     SdkError::ServiceError(se) => {
                         let status = se.raw().status().as_u16();
                         if status == 404 {
-                            return Ok(false);
+                            return Ok(None);
                         }
                         status >= 500
                     }
@@ -103,18 +120,25 @@ impl S3Client {
     pub async fn filter_present(
         &self,
         candidates: &[(String, i32)],
-    ) -> Result<Vec<String>, S3ResolverError> {
+    ) -> Result<Vec<(String, DateTime<Utc>)>, S3ResolverError> {
         let configured_chains: HashSet<i32> = self.chains.keys().copied().collect();
 
+        // Skip (never error on) candidates for an unconfigured chain so a stray
+        // chain_id can't turn into a permanent error that aborts the whole tick.
+        // Given the nox stack is only deployed on configured chains, no upstream
+        // writer can produce a handle for an unconfigured chain, so this never
+        // fires in practice; it stays as a guard against config drift.
         let filtered: Vec<(String, i32)> = candidates
             .iter()
             .filter(|(_, chain_id)| {
-                if configured_chains.contains(chain_id) {
-                    true
-                } else {
-                    self.warn_unconfigured_chain_once(*chain_id);
-                    false
+                let configured = configured_chains.contains(chain_id);
+                if !configured {
+                    warn!(
+                        chain_id,
+                        "no S3 bucket configured for chain_id; skipping candidate"
+                    );
                 }
+                configured
             })
             .cloned()
             .collect();
@@ -122,7 +146,7 @@ impl S3Client {
         // Dispatch HEADs concurrently, throttled by the shared semaphore that
         // caps in-flight S3 operations across all chains.
         let client = self;
-        let results: Vec<Result<Option<String>, S3ResolverError>> = join_all(
+        let results = join_all(
             filtered
                 .into_iter()
                 .map(|(handle_id, chain_id)| async move {
@@ -134,31 +158,26 @@ impl S3Client {
                     client
                         .handle_exists(chain_id, &handle_id)
                         .await
-                        .map(|exists| exists.then_some(handle_id))
+                        .map(|ts| ts.map(|resolved_at| (handle_id, resolved_at)))
                 }),
         )
         .await;
 
         let mut present = Vec::new();
         for r in results {
-            if let Some(handle_id) = r? {
-                present.push(handle_id);
+            if let Some(entry) = r? {
+                present.push(entry);
             }
         }
         Ok(present)
     }
+}
 
-    /// Emit a single `warn!` per unconfigured chain over the process lifetime.
-    fn warn_unconfigured_chain_once(&self, chain_id: i32) {
-        if let Ok(mut warned) = self.warned_chains.lock()
-            && warned.insert(chain_id)
-        {
-            warn!(
-                chain_id,
-                "no S3 bucket configured for chain_id; skipping candidates for this chain"
-            );
-        }
-    }
+/// Convert the AWS SDK timestamp returned by `head_object` into a `chrono`
+/// UTC datetime. Returns `None` only for out-of-range values, which a real S3
+/// `LastModified` never produces.
+fn smithy_to_chrono(dt: &aws_sdk_s3::primitives::DateTime) -> Option<DateTime<Utc>> {
+    DateTime::from_timestamp(dt.secs(), dt.subsec_nanos())
 }
 
 async fn build_chain_bucket(config: &S3ChainConfig) -> Result<ChainBucket, S3ResolverError> {
@@ -217,11 +236,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn smithy_to_chrono_maps_secs_and_subsec_nanos() {
+        // 2021-01-01T00:00:00Z plus 500ms.
+        let smithy =
+            aws_sdk_s3::primitives::DateTime::from_secs_and_nanos(1_609_459_200, 500_000_000);
+        let expected = DateTime::from_timestamp(1_609_459_200, 500_000_000).unwrap();
+        assert_eq!(smithy_to_chrono(&smithy), Some(expected));
+    }
+
+    #[test]
     fn filter_present_skips_unconfigured_chain_without_error() {
         let client = S3Client {
             chains: HashMap::new(),
             semaphore: Arc::new(Semaphore::new(4)),
-            warned_chains: Mutex::new(HashSet::new()),
         };
 
         let candidates = vec![

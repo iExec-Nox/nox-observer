@@ -24,13 +24,29 @@ CREATE TABLE handles (
 -- Every API query filters by chain_id
 CREATE INDEX idx_handles_chain_id ON handles (chain_id);
 
--- Hot path of the s3_resolver: scan unresolved handles oldest-first. The partial
--- predicate keeps the index small (it shrinks as handles resolve) and serves the
--- `WHERE NOT processed_by_s3` filter. A plain btree column defaults to NULLS LAST,
--- matching the query's `ORDER BY block_timestamp`, so the LIMIT is served by an
--- ordered index scan instead of sorting the whole unresolved set on each tick.
--- Rows without a block_timestamp (subgraph has not confirmed the block yet, so the
--- ciphertext is less likely uploaded) sort last and resolve once they are timestamped.
+-- Index for the s3_resolver's hot loop, which repeatedly runs:
+--   WHERE NOT processed_by_s3 ORDER BY block_timestamp DESC NULLS FIRST LIMIT N
+--
+-- Two tricks make this cheap on every tick:
+--  1. Partial (WHERE NOT processed_by_s3): the index only holds unresolved
+--     handles, so it stays small. Handles drop out of it once resolved.
+--  2. Ordered scan: this btree is stored block_timestamp ASC NULLS LAST, whose
+--     exact reverse is DESC NULLS FIRST, so the query is served by a backward
+--     index scan reading the first N rows directly, with no sort.
+--
+-- Ordering is newest-first by design. The order only matters when the unresolved
+-- backlog exceeds one batch; below that, every unresolved row is HEAD-checked each
+-- tick regardless of order. Newest-first keeps freshly-arrived handles flowing and
+-- lets a backlog of stuck oldest handles sink to the tail instead of occupying the
+-- batch and starving everything newer. Some result handles are observable before
+-- their ciphertext is uploaded (compute runs after the on-chain request), so an
+-- unresolved row is not necessarily resolvable yet; an unready handle simply
+-- 404s and is retried on a later tick once its ciphertext lands.
+--
+-- Rows with a NULL block_timestamp arrived via the NATS path, whose messages carry
+-- no block timestamp (the subgraph path fills it in once it indexes the block), so
+-- NULL marks the most recent, not-yet-indexed handles. NULLS FIRST keeps that
+-- recent activity at the front alongside the newest timestamped handles.
 CREATE INDEX idx_handles_unresolved ON handles (block_timestamp) WHERE NOT processed_by_s3;
 
 -- Junction table for parent-child relationships between handles.

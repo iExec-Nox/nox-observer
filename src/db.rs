@@ -89,7 +89,7 @@ impl Db {
             "SELECT handle_id, chain_id
              FROM handles
              WHERE NOT processed_by_s3
-             ORDER BY block_timestamp
+             ORDER BY block_timestamp DESC NULLS FIRST
              LIMIT $1",
         )
         .bind(limit)
@@ -98,12 +98,18 @@ impl Db {
         Ok(rows)
     }
 
-    pub async fn mark_resolved_by_s3(&self, handle_ids: &[String]) -> Result<u64, sqlx::Error> {
-        if handle_ids.is_empty() {
+    pub async fn mark_resolved_by_s3(
+        &self,
+        resolved: &[(String, DateTime<Utc>)],
+    ) -> Result<u64, sqlx::Error> {
+        if resolved.is_empty() {
             return Ok(0);
         }
+        let handle_ids: Vec<&str> = resolved.iter().map(|(id, _)| id.as_str()).collect();
+        let resolved_ats: Vec<DateTime<Utc>> = resolved.iter().map(|(_, ts)| *ts).collect();
         let result = sqlx::query(MARK_HANDLE_RESOLVED_SQL)
-            .bind(handle_ids)
+            .bind(&handle_ids)
+            .bind(&resolved_ats)
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
