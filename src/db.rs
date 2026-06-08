@@ -84,9 +84,9 @@ impl Db {
     pub async fn fetch_unresolved_handles(
         &self,
         limit: i64,
-    ) -> Result<Vec<(String, i32)>, sqlx::Error> {
-        let rows: Vec<(String, i32)> = sqlx::query_as(
-            "SELECT handle_id, chain_id
+    ) -> Result<Vec<(String, i32, Option<DateTime<Utc>>)>, sqlx::Error> {
+        let rows: Vec<(String, i32, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "SELECT handle_id, chain_id, block_timestamp
              FROM handles
              WHERE NOT processed_by_s3
              ORDER BY block_timestamp DESC NULLS FIRST

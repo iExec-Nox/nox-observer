@@ -60,7 +60,23 @@ impl S3Resolver {
         if present.is_empty() {
             return Ok(());
         }
-        let n = self.db.mark_resolved_by_s3(&present).await?;
+        for (handle_id, s3_last_modified, block_timestamp) in &present {
+            if let Some(block_timestamp) = block_timestamp
+                && s3_last_modified < block_timestamp
+            {
+                warn!(
+                    handle_id = %handle_id,
+                    block_timestamp = %block_timestamp,
+                    s3_last_modified = %s3_last_modified,
+                    "s3 resolved_at precedes on-chain emission; resolved_at clamped to block_timestamp"
+                );
+            }
+        }
+        let resolved: Vec<_> = present
+            .into_iter()
+            .map(|(handle_id, s3_last_modified, _)| (handle_id, s3_last_modified))
+            .collect();
+        let n = self.db.mark_resolved_by_s3(&resolved).await?;
         info!(
             resolved = n,
             fetched = candidates.len(),

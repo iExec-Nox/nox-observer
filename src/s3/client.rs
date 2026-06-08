@@ -119,18 +119,18 @@ impl S3Client {
 
     pub async fn filter_present(
         &self,
-        candidates: &[(String, i32)],
-    ) -> Result<Vec<(String, DateTime<Utc>)>, S3ResolverError> {
-        let configured_chains: HashSet<i32> = self.chains.keys().copied().collect();
+        candidates: &[(String, i32, Option<DateTime<Utc>>)],
+    ) -> Result<Vec<(String, DateTime<Utc>, Option<DateTime<Utc>>)>, S3ResolverError> {
+        let configured_chains: HashSet<i32> = self.configured_chains().into_iter().collect();
 
         // Skip (never error on) candidates for an unconfigured chain so a stray
         // chain_id can't turn into a permanent error that aborts the whole tick.
         // Given the nox stack is only deployed on configured chains, no upstream
         // writer can produce a handle for an unconfigured chain, so this never
         // fires in practice; it stays as a guard against config drift.
-        let filtered: Vec<(String, i32)> = candidates
+        let filtered: Vec<(String, i32, Option<DateTime<Utc>>)> = candidates
             .iter()
-            .filter(|(_, chain_id)| {
+            .filter(|(_, chain_id, _)| {
                 let configured = configured_chains.contains(chain_id);
                 if !configured {
                     warn!(
@@ -146,21 +146,19 @@ impl S3Client {
         // Dispatch HEADs concurrently, throttled by the shared semaphore that
         // caps in-flight S3 operations across all chains.
         let client = self;
-        let results = join_all(
-            filtered
-                .into_iter()
-                .map(|(handle_id, chain_id)| async move {
-                    let _permit = client
-                        .semaphore
-                        .acquire()
-                        .await
-                        .map_err(|e| S3ResolverError::S3(format!("semaphore error: {e}")))?;
-                    client
-                        .handle_exists(chain_id, &handle_id)
-                        .await
-                        .map(|ts| ts.map(|resolved_at| (handle_id, resolved_at)))
-                }),
-        )
+        let results = join_all(filtered.into_iter().map(
+            |(handle_id, chain_id, block_timestamp)| async move {
+                let _permit = client
+                    .semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| S3ResolverError::S3(format!("semaphore error: {e}")))?;
+                client
+                    .handle_exists(chain_id, &handle_id)
+                    .await
+                    .map(|ts| ts.map(|resolved_at| (handle_id, resolved_at, block_timestamp)))
+            },
+        ))
         .await;
 
         let mut present = Vec::new();
@@ -252,8 +250,8 @@ mod tests {
         };
 
         let candidates = vec![
-            ("handle-abc".to_string(), 999_i32),
-            ("handle-def".to_string(), 42_i32),
+            ("handle-abc".to_string(), 999_i32, None),
+            ("handle-def".to_string(), 42_i32, None),
         ];
 
         let rt = tokio::runtime::Runtime::new().unwrap();
