@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 alloy-primitives = { version = "1.5.7", features = ["serde"] }
 anyhow = "1.0.102"
+aws-config = "1.8.16"
+aws-sdk-s3 = "1.132.0"
 async-nats = "0.49.0"
 axum = "0.8.8"
 axum-prometheus = "0.10.0"

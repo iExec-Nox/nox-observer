@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::handlers;
 use crate::nats::{NatsClient, NatsConsumer};
+use crate::s3::{S3Client, S3Resolver};
 use crate::subgraph::{Poller, SubgraphClient};
 
 #[derive(Clone)]
@@ -33,6 +34,7 @@ pub struct Application {
     prometheus_layer: PrometheusMetricLayer<'static>,
     poller: Poller,
     nats_consumer: NatsConsumer,
+    s3_resolver: S3Resolver,
 }
 
 impl Application {
@@ -68,7 +70,17 @@ impl Application {
         let nats_client = NatsClient::connect(&config.nats)
             .await
             .context("initializing NATS client")?;
-        let nats_consumer = NatsConsumer::new(nats_client, db, config.nats.clone());
+        let nats_consumer = NatsConsumer::new(nats_client, db.clone(), config.nats.clone());
+
+        let s3_client = S3Client::new(&config.s3)
+            .await
+            .context("Failed to initialize the S3 client")?;
+        let s3_resolver = S3Resolver::new(
+            s3_client,
+            db,
+            Duration::from_secs(config.s3.poll_interval_seconds),
+            i64::from(config.s3.batch_size),
+        );
 
         Ok(Self {
             config,
@@ -76,6 +88,7 @@ impl Application {
             prometheus_layer,
             poller,
             nats_consumer,
+            s3_resolver,
         })
     }
 
@@ -103,6 +116,7 @@ impl Application {
 
         let poller = self.poller;
         let nats_consumer = self.nats_consumer;
+        let s3_resolver = self.s3_resolver;
         let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
         tokio::select! {
@@ -113,6 +127,10 @@ impl Application {
             res = nats_consumer.run() => {
                 error!("nats consumer exited; bringing observer down");
                 res.context("nats consumer failed")?;
+            }
+            res = s3_resolver.run() => {
+                error!("s3 resolver exited; bringing observer down");
+                res.context("s3 resolver failed")?;
             }
             res = server => {
                 res.context("Server encountered an error during execution")?;

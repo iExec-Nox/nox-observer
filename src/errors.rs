@@ -76,3 +76,44 @@ impl PollerError {
         }
     }
 }
+
+// ==================================
+// S3 resolver error
+// ==================================
+
+#[derive(Debug, Error)]
+pub enum S3ResolverError {
+    /// A permanent S3 failure (auth, misconfiguration, malformed request).
+    #[error("S3 error: {0}")]
+    S3(String),
+
+    /// A transient S3 failure (network blip, timeout, 5xx) safe to retry.
+    #[error("transient S3 error: {0}")]
+    S3Transient(String),
+
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+}
+
+impl S3ResolverError {
+    /// Errors that are likely to resolve on their own (network blip, transient DB).
+    /// S3 errors are classified at the point of failure from the typed SDK error.
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Self::S3Transient(_) | Self::Database(_))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::S3ResolverError;
+
+    #[test]
+    fn is_transient_returns_true_when_variant_is_s3_transient() {
+        assert!(S3ResolverError::S3Transient("request timed out".to_string()).is_transient());
+    }
+
+    #[test]
+    fn is_transient_returns_false_when_variant_is_permanent_s3() {
+        assert!(!S3ResolverError::S3("access denied".to_string()).is_transient());
+    }
+}
