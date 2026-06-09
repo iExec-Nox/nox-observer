@@ -16,7 +16,7 @@ use crate::db::Db;
 use crate::handlers;
 use crate::nats::{NatsClient, NatsConsumer};
 use crate::s3::{S3Client, S3Resolver};
-use crate::subgraph::{Poller, SubgraphClient};
+use crate::subgraph::{SubgraphClient, SubgraphPoller};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -33,7 +33,7 @@ pub struct Application {
     config: Config,
     state: AppState,
     prometheus_layer: PrometheusMetricLayer<'static>,
-    pollers: Vec<Poller>,
+    subgraph_pollers: Vec<SubgraphPoller>,
     nats_consumer: NatsConsumer,
     s3_resolver: S3Resolver,
 }
@@ -51,19 +51,20 @@ impl Application {
 
         let poll_interval = Duration::from_secs(config.subgraph.poll_interval_seconds);
         let batch_size = i64::from(config.subgraph.batch_size);
-        let mut pollers = Vec::with_capacity(config.subgraph.chains.len());
+        let mut subgraph_pollers = Vec::with_capacity(config.subgraph.chains.len());
         for (chain_id_str, chain_cfg) in &config.subgraph.chains {
             let chain_id: i32 = chain_id_str.parse().with_context(|| {
                 format!("invalid chain_id key '{chain_id_str}' in subgraph.chains (expected i32)")
             })?;
             let subgraph = SubgraphClient::new(chain_cfg.url.clone())
                 .with_context(|| format!("Failed to build subgraph client for chain {chain_id}"))?;
-            let poller = Poller::new(subgraph, db.clone(), chain_id, poll_interval, batch_size)
-                .await
-                .with_context(|| {
-                    format!("Failed to initialize subgraph poller for chain {chain_id}")
-                })?;
-            pollers.push(poller);
+            let subgraph_poller =
+                SubgraphPoller::new(subgraph, db.clone(), chain_id, poll_interval, batch_size)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to initialize subgraph poller for chain {chain_id}")
+                    })?;
+            subgraph_pollers.push(subgraph_poller);
         }
 
         let nats_client = NatsClient::connect(&config.nats)
@@ -85,7 +86,7 @@ impl Application {
             config,
             state: AppState { metrics_handle },
             prometheus_layer,
-            pollers,
+            subgraph_pollers,
             nats_consumer,
             s3_resolver,
         })
@@ -117,13 +118,14 @@ impl Application {
         let s3_resolver = self.s3_resolver;
         let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
-        let mut poller_set: JoinSet<Result<(), crate::errors::PollerError>> = JoinSet::new();
-        for poller in self.pollers {
-            poller_set.spawn(poller.run());
+        let mut subgraph_poller_set: JoinSet<Result<(), crate::errors::SubgraphPollerError>> =
+            JoinSet::new();
+        for subgraph_poller in self.subgraph_pollers {
+            subgraph_poller_set.spawn(subgraph_poller.run());
         }
 
         tokio::select! {
-            res = poller_set.join_next() => {
+            res = subgraph_poller_set.join_next() => {
                 error!("a subgraph poller exited; bringing observer down");
                 match res {
                     Some(Ok(inner)) => inner.context("subgraph poller failed")?,
