@@ -20,7 +20,9 @@ impl IntoResponse for ObserverError {
     fn into_response(self) -> axum::response::Response {
         warn!("Request failed: {}", self);
         let status = match &self {
-            ObserverError::Nats(_) | ObserverError::SubgraphPoller(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ObserverError::Nats(_) | ObserverError::SubgraphPoller(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         };
         (status, Json(json!({ "error": self.to_string() }))).into_response()
     }
