@@ -26,30 +26,41 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+/// Subgraph poller configuration.
+///
+/// `chains` maps chain IDs (as strings, because `config` deserializes map keys
+/// as strings) to per-chain subgraph endpoint URLs. The custom validator below
+/// enforces: at least one chain, every key parses as `i32` (matches the `INT`
+/// `chain_id` column), every URL is well-formed.
+#[derive(Debug, Clone, Deserialize, Validate)]
 pub struct SubgraphConfig {
-    #[validate(custom(function = "validate_subgraph_chains_non_empty"))]
-    #[validate(nested)]
-    pub chains: HashMap<String, SubgraphChainConfig>,
+    #[validate(custom(function = "validate_subgraph_chains"))]
+    pub chains: HashMap<String, String>,
     #[validate(range(min = 1, max = 3600))]
     pub poll_interval_seconds: u64,
     #[validate(range(min = 1, max = 1000))]
     pub batch_size: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
-pub struct SubgraphChainConfig {
-    #[validate(url)]
-    pub url: String,
-}
-
-fn validate_subgraph_chains_non_empty(
-    chains: &HashMap<String, SubgraphChainConfig>,
-) -> Result<(), ValidationError> {
+fn validate_subgraph_chains(chains: &HashMap<String, String>) -> Result<(), ValidationError> {
     if chains.is_empty() {
         return Err(ValidationError::new(
             "subgraph.chains must contain at least one chain",
         ));
+    }
+    for (chain_id, url) in chains {
+        if chain_id.parse::<i32>().is_err() {
+            let mut err = ValidationError::new("invalid_chain_id");
+            err.message =
+                Some(format!("subgraph.chains key '{chain_id}' must be a valid i32").into());
+            return Err(err);
+        }
+        if reqwest::Url::parse(url).is_err() {
+            let mut err = ValidationError::new("invalid_chain_url");
+            err.message =
+                Some(format!("subgraph.chains[{chain_id}] is not a valid URL: {url}").into());
+            return Err(err);
+        }
     }
     Ok(())
 }
@@ -241,7 +252,7 @@ mod tests {
     fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 2] {
         [
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL",
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
                 Some(TEST_SUBGRAPH_URL),
             ),
             ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
@@ -297,7 +308,7 @@ mod tests {
             assert_eq!(1, config.subgraph.chains.len());
             assert_eq!(
                 TEST_SUBGRAPH_URL,
-                config.subgraph.chains.get("421614").unwrap().url
+                config.subgraph.chains.get("421614").unwrap().as_str()
             );
             assert_eq!(5, config.database.max_connections);
             assert_eq!(2, config.nats.urls.len());
@@ -411,7 +422,7 @@ mod tests {
     fn load_returns_err_when_required_env_vars_missing() {
         temp_env::with_vars(
             [
-                ("NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL", None::<&str>),
+                ("NOX_OBSERVER_SUBGRAPH__CHAINS__421614", None::<&str>),
                 ("NOX_OBSERVER_DATABASE__URL", None::<&str>),
             ],
             || {
@@ -512,11 +523,11 @@ mod tests {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
             ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAINS__1__URL",
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__1",
                 Some("https://example.com/sg-mainnet"),
             ),
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL",
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
                 Some("https://example.com/sg-arbitrum-sepolia"),
             ),
         ];
@@ -528,11 +539,11 @@ mod tests {
             assert_eq!(2, config.subgraph.chains.len());
             assert_eq!(
                 "https://example.com/sg-mainnet",
-                config.subgraph.chains.get("1").unwrap().url
+                config.subgraph.chains.get("1").unwrap().as_str()
             );
             assert_eq!(
                 "https://example.com/sg-arbitrum-sepolia",
-                config.subgraph.chains.get("421614").unwrap().url
+                config.subgraph.chains.get("421614").unwrap().as_str()
             );
         });
     }

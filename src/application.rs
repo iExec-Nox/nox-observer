@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -7,12 +8,14 @@ use axum_prometheus::{
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::signal;
-use tokio::task::JoinSet;
+use tokio::task::{Id as TaskId, JoinSet};
+use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::db::Db;
+use crate::errors::SubgraphPollerError;
 use crate::handlers;
 use crate::nats::{NatsClient, NatsConsumer};
 use crate::s3::{S3Client, S3Resolver};
@@ -33,9 +36,15 @@ pub struct Application {
     config: Config,
     state: AppState,
     prometheus_layer: PrometheusMetricLayer<'static>,
-    subgraph_pollers: Vec<SubgraphPoller>,
+    subgraph_pollers: Vec<(i32, SubgraphPoller)>,
     nats_consumer: NatsConsumer,
     s3_resolver: S3Resolver,
+}
+
+/// Outcome of one subgraph poller task wrapped around a cancellation race.
+enum PollerOutcome {
+    Cancelled,
+    Exited(Result<(), SubgraphPollerError>),
 }
 
 impl Application {
@@ -52,19 +61,21 @@ impl Application {
         let poll_interval = Duration::from_secs(config.subgraph.poll_interval_seconds);
         let batch_size = i64::from(config.subgraph.batch_size);
         let mut subgraph_pollers = Vec::with_capacity(config.subgraph.chains.len());
-        for (chain_id_str, chain_cfg) in &config.subgraph.chains {
+        for (chain_id_str, url) in &config.subgraph.chains {
+            // `validate_subgraph_chains` already enforced this parses as i32, so
+            // an unwrap-like context is enough; if it ever fires it's a code bug.
             let chain_id: i32 = chain_id_str.parse().with_context(|| {
                 format!("invalid chain_id key '{chain_id_str}' in subgraph.chains (expected i32)")
             })?;
-            let subgraph = SubgraphClient::new(chain_cfg.url.clone())
+            let subgraph = SubgraphClient::new(url.clone())
                 .with_context(|| format!("Failed to build subgraph client for chain {chain_id}"))?;
-            let subgraph_poller =
+            let poller =
                 SubgraphPoller::new(subgraph, db.clone(), chain_id, poll_interval, batch_size)
                     .await
                     .with_context(|| {
                         format!("Failed to initialize subgraph poller for chain {chain_id}")
                     })?;
-            subgraph_pollers.push(subgraph_poller);
+            subgraph_pollers.push((chain_id, poller));
         }
 
         let nats_client = NatsClient::connect(&config.nats)
@@ -118,35 +129,115 @@ impl Application {
         let s3_resolver = self.s3_resolver;
         let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
-        let mut subgraph_poller_set: JoinSet<Result<(), crate::errors::SubgraphPollerError>> =
-            JoinSet::new();
-        for subgraph_poller in self.subgraph_pollers {
-            subgraph_poller_set.spawn(subgraph_poller.run());
+        let cancel = CancellationToken::new();
+        let mut subgraph_poller_set: JoinSet<PollerOutcome> = JoinSet::new();
+        let mut task_to_chain: HashMap<TaskId, i32> = HashMap::new();
+        for (chain_id, poller) in self.subgraph_pollers {
+            let token = cancel.clone();
+            let handle = subgraph_poller_set.spawn(async move {
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => PollerOutcome::Cancelled,
+                    res = poller.run() => PollerOutcome::Exited(res),
+                }
+            });
+            task_to_chain.insert(handle.id(), chain_id);
         }
 
-        tokio::select! {
-            res = subgraph_poller_set.join_next() => {
-                error!("a subgraph poller exited; bringing observer down");
-                match res {
-                    Some(Ok(inner)) => inner.context("subgraph poller failed")?,
-                    Some(Err(e)) => return Err(anyhow!("subgraph poller task panicked: {e}")),
-                    None => return Err(anyhow!("no subgraph poller was spawned")),
-                }
+        let exit = tokio::select! {
+            res = subgraph_poller_set.join_next_with_id() => Exit::Poller(res),
+            res = nats_consumer.run() => Exit::Nats(res),
+            res = s3_resolver.run() => Exit::S3(res),
+            res = server => Exit::Server(res),
+        };
+
+        info!("triggering graceful shutdown of remaining subgraph pollers");
+        cancel.cancel();
+        drain_poller_set(&mut subgraph_poller_set, &task_to_chain).await;
+
+        match exit {
+            Exit::Server(res) => {
+                info!("Server shutdown complete");
+                res.context("Server encountered an error during execution")?;
+                Ok(())
             }
-            res = nats_consumer.run() => {
+            Exit::Nats(res) => {
                 error!("nats consumer exited; bringing observer down");
                 res.context("nats consumer failed")?;
+                Ok(())
             }
-            res = s3_resolver.run() => {
+            Exit::S3(res) => {
                 error!("s3 resolver exited; bringing observer down");
                 res.context("s3 resolver failed")?;
+                Ok(())
             }
-            res = server => {
-                res.context("Server encountered an error during execution")?;
+            Exit::Poller(maybe) => Err(map_first_poller_exit(maybe, &task_to_chain)),
+        }
+    }
+}
+
+enum Exit {
+    Poller(Option<Result<(TaskId, PollerOutcome), tokio::task::JoinError>>),
+    Nats(Result<(), crate::errors::ObserverError>),
+    S3(Result<(), crate::errors::S3ResolverError>),
+    Server(Result<(), std::io::Error>),
+}
+
+async fn drain_poller_set(
+    set: &mut JoinSet<PollerOutcome>,
+    task_to_chain: &HashMap<TaskId, i32>,
+) {
+    while let Some(res) = set.join_next_with_id().await {
+        match res {
+            Ok((id, PollerOutcome::Cancelled)) => {
+                info!(chain_id = ?task_to_chain.get(&id), "subgraph poller stopped cleanly");
+            }
+            Ok((id, PollerOutcome::Exited(Ok(())))) => {
+                warn!(
+                    chain_id = ?task_to_chain.get(&id),
+                    "subgraph poller exited with Ok before cancellation took effect (run should be infinite)"
+                );
+            }
+            Ok((id, PollerOutcome::Exited(Err(e)))) => {
+                error!(
+                    chain_id = ?task_to_chain.get(&id),
+                    "subgraph poller failed during drain: {e:#}"
+                );
+            }
+            Err(join_err) => {
+                error!(
+                    chain_id = ?task_to_chain.get(&join_err.id()),
+                    "subgraph poller task panicked during drain: {join_err}"
+                );
             }
         }
-        info!("Server shutdown complete");
-        Ok(())
+    }
+}
+
+fn map_first_poller_exit(
+    maybe: Option<Result<(TaskId, PollerOutcome), tokio::task::JoinError>>,
+    task_to_chain: &HashMap<TaskId, i32>,
+) -> anyhow::Error {
+    match maybe {
+        Some(Ok((id, PollerOutcome::Cancelled))) => {
+            // Nothing should have cancelled the token before this point.
+            let chain = task_to_chain.get(&id);
+            anyhow!("subgraph poller for chain {chain:?} reported Cancelled without prior signal")
+        }
+        Some(Ok((id, PollerOutcome::Exited(Ok(()))))) => {
+            let chain = task_to_chain.get(&id);
+            anyhow!("subgraph poller for chain {chain:?} exited unexpectedly with Ok (run() should be infinite)")
+        }
+        Some(Ok((id, PollerOutcome::Exited(Err(e))))) => {
+            let chain = task_to_chain.get(&id);
+            anyhow::Error::new(e)
+                .context(format!("subgraph poller for chain {chain:?} failed"))
+        }
+        Some(Err(join_err)) => {
+            let chain = task_to_chain.get(&join_err.id());
+            anyhow!("subgraph poller task panicked (chain {chain:?}): {join_err}")
+        }
+        None => anyhow!("no subgraph poller was spawned"),
     }
 }
 
