@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -8,8 +8,6 @@ use axum_prometheus::{
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::signal;
-use tokio::task::{Id as TaskId, JoinSet};
-use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
@@ -18,9 +16,7 @@ use crate::db::Db;
 use crate::handlers;
 use crate::nats::{NatsClient, NatsConsumer};
 use crate::s3::{S3Client, S3Resolver};
-use crate::subgraph::{
-    PollerOutcome, SubgraphClient, SubgraphPoller, drain_poller_set, map_first_poller_exit,
-};
+use crate::subgraph::{SubgraphClient, SubgraphPoller, SubgraphPollerSupervisor};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -138,31 +134,16 @@ impl Application {
         let s3_resolver = self.s3_resolver;
         let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
-        let cancel = CancellationToken::new();
-        let mut subgraph_poller_set: JoinSet<PollerOutcome> = JoinSet::new();
-        let mut task_to_chain: HashMap<TaskId, i32> = HashMap::new();
-        for (chain_id, poller) in self.subgraph_pollers {
-            let token = cancel.clone();
-            let handle = subgraph_poller_set.spawn(async move {
-                tokio::select! {
-                    biased;
-                    _ = token.cancelled() => PollerOutcome::Cancelled,
-                    res = poller.run() => PollerOutcome::Exited(res),
-                }
-            });
-            task_to_chain.insert(handle.id(), chain_id);
-        }
+        let mut supervisor = SubgraphPollerSupervisor::spawn(self.subgraph_pollers);
 
         let exit = tokio::select! {
-            res = subgraph_poller_set.join_next_with_id() => Exit::Poller(res),
+            err = supervisor.wait_for_exit() => Exit::Poller(err),
             res = nats_consumer.run() => Exit::Nats(res),
             res = s3_resolver.run() => Exit::S3(res),
             res = server => Exit::Server(res),
         };
 
-        info!("triggering graceful shutdown of remaining subgraph pollers");
-        cancel.cancel();
-        drain_poller_set(&mut subgraph_poller_set, &task_to_chain).await;
+        supervisor.shutdown().await;
 
         match exit {
             Exit::Server(res) => {
@@ -180,13 +161,13 @@ impl Application {
                 res.context("s3 resolver failed")?;
                 Ok(())
             }
-            Exit::Poller(maybe) => Err(map_first_poller_exit(maybe, &task_to_chain)),
+            Exit::Poller(err) => Err(err),
         }
     }
 }
 
 enum Exit {
-    Poller(Option<Result<(TaskId, PollerOutcome), tokio::task::JoinError>>),
+    Poller(anyhow::Error),
     Nats(Result<(), crate::errors::ObserverError>),
     S3(Result<(), crate::errors::S3ResolverError>),
     Server(Result<(), std::io::Error>),
