@@ -6,6 +6,8 @@
 //!   (chain_id or block_number overflow) / no-ack on DB error
 //! - extracts handles per operator variant before upserting
 
+use std::collections::HashSet;
+
 use async_nats::jetstream;
 use futures_util::StreamExt;
 use tracing::{debug, error, info, warn};
@@ -20,14 +22,24 @@ pub struct NatsConsumer {
     nats_client: NatsClient,
     db: Db,
     config: NatsConfig,
+    /// Chains we want to ingest from NATS. Messages for any other `chain_id`
+    /// are silently ACK-discarded so the JetStream consumer doesn't redeliver
+    /// them. The set is built at startup from `subgraph.chains ∪ s3.chains`.
+    allowed_chains: HashSet<u32>,
 }
 
 impl NatsConsumer {
-    pub fn new(nats_client: NatsClient, db: Db, config: NatsConfig) -> Self {
+    pub fn new(
+        nats_client: NatsClient,
+        db: Db,
+        config: NatsConfig,
+        allowed_chains: HashSet<u32>,
+    ) -> Self {
         Self {
             nats_client,
             db,
             config,
+            allowed_chains,
         }
     }
 
@@ -125,6 +137,21 @@ impl NatsConsumer {
                 return;
             }
         };
+
+        // Skip + ACK messages from chains we don't index (no subgraph/S3 config).
+        // The broker keeps delivering everything (no subject-level filter possible
+        // until upstream adds chain_id to the subject), so we drop here.
+        if !self.allowed_chains.contains(&tx_msg.chain_id) {
+            debug!(
+                chain_id = tx_msg.chain_id,
+                tx_hash = tx_msg.transaction_hash,
+                "ignoring NATS message for non-configured chain; ACK-discarding"
+            );
+            if let Err(ack_err) = msg.ack().await {
+                error!(error = %ack_err, "ACK after chain-filter skip failed");
+            }
+            return;
+        }
 
         let handles = match extract_handles(&tx_msg) {
             Ok(h) => h,
