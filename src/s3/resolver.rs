@@ -52,7 +52,11 @@ impl S3Resolver {
     }
 
     async fn resolve_once(&self) -> Result<(), S3ResolverError> {
-        let candidates = self.db.fetch_unresolved_handles(self.batch_size).await?;
+        let chains = self.s3.configured_chains();
+        let candidates = self
+            .db
+            .fetch_unresolved_handles(&chains, self.batch_size)
+            .await?;
         if candidates.is_empty() {
             return Ok(());
         }

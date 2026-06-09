@@ -86,15 +86,21 @@ impl Db {
 
     pub async fn fetch_unresolved_handles(
         &self,
+        chain_ids: &[i32],
         limit: i64,
     ) -> Result<Vec<(String, i32, Option<DateTime<Utc>>)>, sqlx::Error> {
+        if chain_ids.is_empty() {
+            return Ok(Vec::new());
+        }
         let rows: Vec<(String, i32, Option<DateTime<Utc>>)> = sqlx::query_as(
             "SELECT handle_id, chain_id, block_timestamp
              FROM handles
              WHERE NOT processed_by_s3
+               AND chain_id = ANY($1)
              ORDER BY block_timestamp DESC NULLS FIRST
-             LIMIT $1",
+             LIMIT $2",
         )
+        .bind(chain_ids)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
