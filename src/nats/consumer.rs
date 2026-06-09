@@ -143,7 +143,8 @@ impl NatsConsumer {
         // until upstream adds chain_id to the subject), so we drop here. The
         // i32::try_from also catches the (theoretical) overflow case: a chain_id
         // that doesn't fit in i32 can't be in the configured set anyway.
-        let configured = i32::try_from(tx_msg.chain_id).is_ok_and(|id| self.allowed_chains.contains(&id));
+        let configured =
+            i32::try_from(tx_msg.chain_id).is_ok_and(|id| self.allowed_chains.contains(&id));
         if !configured {
             debug!(
                 chain_id = tx_msg.chain_id,

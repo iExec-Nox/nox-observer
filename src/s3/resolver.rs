@@ -64,18 +64,20 @@ impl S3Resolver {
         if present.is_empty() {
             return Ok(());
         }
-        for (handle_id, s3_last_modified, block_timestamp) in &present {
-            if let Some(block_timestamp) = block_timestamp
-                && s3_last_modified < block_timestamp
-            {
-                warn!(
-                    handle_id = %handle_id,
-                    block_timestamp = %block_timestamp,
-                    s3_last_modified = %s3_last_modified,
-                    "s3 resolved_at precedes on-chain emission; resolved_at clamped to block_timestamp"
-                );
-            }
-        }
+        // Note: s3_last_modified can legitimately precede block_timestamp.
+        // Two origins for a handle:
+        //   1. Created on-chain as a computation result (FHE op output): the
+        //      ciphertext is uploaded to S3 after the tx, so normally
+        //      s3_last_modified >= block_timestamp.
+        //   2. Created off-chain via the handle gateway from a clear value
+        //      (e.g. encrypted input to a contract call): the gateway uploads
+        //      the ciphertext to S3 first, *then* the on-chain reference is
+        //      emitted. In this case s3_last_modified < block_timestamp by
+        //      design.
+        // On top of that, handle_id can be referenced by many on-chain events over
+        // time, the recorded s3_last_modified stays the original upload date.
+        // The SQL clamp (GREATEST(resolved_at, block_timestamp)) keeps the
+        // resolved_after_emission CHECK satisfied in cases 2 and 3.
         let resolved: Vec<_> = present
             .into_iter()
             .map(|(handle_id, s3_last_modified, _)| (handle_id, s3_last_modified))
