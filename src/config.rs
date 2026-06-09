@@ -190,6 +190,13 @@ fn validate_s3_chains_non_empty(
             "s3.chains must contain at least one chain",
         ));
     }
+    for chain_id in chains.keys() {
+        if chain_id.parse::<i32>().is_err() {
+            return Err(ValidationError::new("invalid_chain_id").with_message(
+                format!("s3.chains key '{chain_id}' must be a valid i32").into(),
+            ));
+        }
+    }
     Ok(())
 }
 

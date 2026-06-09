@@ -25,7 +25,7 @@ pub struct NatsConsumer {
     /// Chains we want to ingest from NATS. Messages for any other `chain_id`
     /// are silently ACK-discarded so the JetStream consumer doesn't redeliver
     /// them. The set is built at startup from `subgraph.chains ∪ s3.chains`.
-    allowed_chains: HashSet<u32>,
+    allowed_chains: HashSet<i32>,
 }
 
 impl NatsConsumer {
@@ -33,7 +33,7 @@ impl NatsConsumer {
         nats_client: NatsClient,
         db: Db,
         config: NatsConfig,
-        allowed_chains: HashSet<u32>,
+        allowed_chains: HashSet<i32>,
     ) -> Self {
         Self {
             nats_client,
@@ -140,8 +140,11 @@ impl NatsConsumer {
 
         // Skip + ACK messages from chains we don't index (no subgraph/S3 config).
         // The broker keeps delivering everything (no subject-level filter possible
-        // until upstream adds chain_id to the subject), so we drop here.
-        if !self.allowed_chains.contains(&tx_msg.chain_id) {
+        // until upstream adds chain_id to the subject), so we drop here. The
+        // i32::try_from also catches the (theoretical) overflow case: a chain_id
+        // that doesn't fit in i32 can't be in the configured set anyway.
+        let configured = i32::try_from(tx_msg.chain_id).is_ok_and(|id| self.allowed_chains.contains(&id));
+        if !configured {
             debug!(
                 chain_id = tx_msg.chain_id,
                 tx_hash = tx_msg.transaction_hash,

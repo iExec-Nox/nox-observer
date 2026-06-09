@@ -78,12 +78,12 @@ impl Application {
         // NATS ingests events from every chain published upstream. To keep the
         // observer self-consistent, restrict the consumer to the chains we can
         // actually serve downstream (i.e. those with a subgraph or S3 config).
-        let allowed_chains: HashSet<u32> = config
+        let allowed_chains: HashSet<i32> = config
             .subgraph
             .chains
             .keys()
             .chain(config.s3.chains.keys())
-            .filter_map(|s| s.parse::<u32>().ok())
+            .filter_map(|s| s.parse::<i32>().ok())
             .collect();
 
         let nats_client = NatsClient::connect(&config.nats)
