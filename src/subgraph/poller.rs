@@ -40,9 +40,15 @@ impl Poller {
     }
 
     pub async fn run(mut self) -> Result<(), PollerError> {
-        info!(chain_id = self.chain_id, "poller starting; resuming from skip={}", self.skip);
+        info!(
+            chain_id = self.chain_id,
+            "poller starting; resuming from skip={}", self.skip
+        );
         self.catch_up().await?;
-        info!(chain_id = self.chain_id, "caught up at skip={}; entering live mode", self.skip);
+        info!(
+            chain_id = self.chain_id,
+            "caught up at skip={}; entering live mode", self.skip
+        );
 
         let mut ticker = interval(self.poll_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -132,7 +138,10 @@ impl Poller {
             self.db.save_skip(self.chain_id, self.skip).await?;
         }
 
-        info!(chain_id = self.chain_id, "polled {n} handles (skip={})", self.skip);
+        info!(
+            chain_id = self.chain_id,
+            "polled {n} handles (skip={})", self.skip
+        );
         Ok(n)
     }
 }
