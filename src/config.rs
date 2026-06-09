@@ -50,16 +50,14 @@ fn validate_subgraph_chains(chains: &HashMap<String, String>) -> Result<(), Vali
     }
     for (chain_id, url) in chains {
         if chain_id.parse::<i32>().is_err() {
-            let mut err = ValidationError::new("invalid_chain_id");
-            err.message =
-                Some(format!("subgraph.chains key '{chain_id}' must be a valid i32").into());
-            return Err(err);
+            return Err(ValidationError::new("invalid_chain_id").with_message(
+                format!("subgraph.chains key '{chain_id}' must be a valid i32").into(),
+            ));
         }
         if reqwest::Url::parse(url).is_err() {
-            let mut err = ValidationError::new("invalid_chain_url");
-            err.message =
-                Some(format!("subgraph.chains[{chain_id}] is not a valid URL: {url}").into());
-            return Err(err);
+            return Err(ValidationError::new("invalid_chain_url").with_message(
+                format!("subgraph.chains[{chain_id}] is not a valid URL: {url}").into(),
+            ));
         }
     }
     Ok(())

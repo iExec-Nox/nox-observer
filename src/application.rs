@@ -15,11 +15,12 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::db::Db;
-use crate::errors::SubgraphPollerError;
 use crate::handlers;
 use crate::nats::{NatsClient, NatsConsumer};
 use crate::s3::{S3Client, S3Resolver};
-use crate::subgraph::{SubgraphClient, SubgraphPoller};
+use crate::subgraph::{
+    PollerOutcome, SubgraphClient, SubgraphPoller, drain_poller_set, map_first_poller_exit,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -39,12 +40,6 @@ pub struct Application {
     subgraph_pollers: Vec<(i32, SubgraphPoller)>,
     nats_consumer: NatsConsumer,
     s3_resolver: S3Resolver,
-}
-
-/// Outcome of one subgraph poller task wrapped around a cancellation race.
-enum PollerOutcome {
-    Cancelled,
-    Exited(Result<(), SubgraphPollerError>),
 }
 
 impl Application {
@@ -219,62 +214,6 @@ fn ensure_chain_consistency(config: &Config) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-async fn drain_poller_set(set: &mut JoinSet<PollerOutcome>, task_to_chain: &HashMap<TaskId, i32>) {
-    while let Some(res) = set.join_next_with_id().await {
-        match res {
-            Ok((id, PollerOutcome::Cancelled)) => {
-                info!(chain_id = ?task_to_chain.get(&id), "subgraph poller stopped cleanly");
-            }
-            Ok((id, PollerOutcome::Exited(Ok(())))) => {
-                warn!(
-                    chain_id = ?task_to_chain.get(&id),
-                    "subgraph poller exited with Ok before cancellation took effect (run should be infinite)"
-                );
-            }
-            Ok((id, PollerOutcome::Exited(Err(e)))) => {
-                error!(
-                    chain_id = ?task_to_chain.get(&id),
-                    "subgraph poller failed during drain: {e:#}"
-                );
-            }
-            Err(join_err) => {
-                error!(
-                    chain_id = ?task_to_chain.get(&join_err.id()),
-                    "subgraph poller task panicked during drain: {join_err}"
-                );
-            }
-        }
-    }
-}
-
-fn map_first_poller_exit(
-    maybe: Option<Result<(TaskId, PollerOutcome), tokio::task::JoinError>>,
-    task_to_chain: &HashMap<TaskId, i32>,
-) -> anyhow::Error {
-    match maybe {
-        Some(Ok((id, PollerOutcome::Cancelled))) => {
-            // Nothing should have cancelled the token before this point.
-            let chain = task_to_chain.get(&id);
-            anyhow!("subgraph poller for chain {chain:?} reported Cancelled without prior signal")
-        }
-        Some(Ok((id, PollerOutcome::Exited(Ok(()))))) => {
-            let chain = task_to_chain.get(&id);
-            anyhow!(
-                "subgraph poller for chain {chain:?} exited unexpectedly with Ok (run() should be infinite)"
-            )
-        }
-        Some(Ok((id, PollerOutcome::Exited(Err(e))))) => {
-            let chain = task_to_chain.get(&id);
-            anyhow::Error::new(e).context(format!("subgraph poller for chain {chain:?} failed"))
-        }
-        Some(Err(join_err)) => {
-            let chain = task_to_chain.get(&join_err.id());
-            anyhow!("subgraph poller task panicked (chain {chain:?}): {join_err}")
-        }
-        None => anyhow!("no subgraph poller was spawned"),
-    }
 }
 
 async fn shutdown_signal() {
