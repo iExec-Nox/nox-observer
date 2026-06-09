@@ -26,16 +26,32 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct SubgraphConfig {
-    #[validate(url)]
-    pub url: String,
-    #[validate(range(min = 1))]
-    pub chain_id: u64,
+    #[validate(custom(function = "validate_subgraph_chains_non_empty"))]
+    #[validate(nested)]
+    pub chains: HashMap<String, SubgraphChainConfig>,
     #[validate(range(min = 1, max = 3600))]
     pub poll_interval_seconds: u64,
     #[validate(range(min = 1, max = 1000))]
     pub batch_size: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct SubgraphChainConfig {
+    #[validate(url)]
+    pub url: String,
+}
+
+fn validate_subgraph_chains_non_empty(
+    chains: &HashMap<String, SubgraphChainConfig>,
+) -> Result<(), ValidationError> {
+    if chains.is_empty() {
+        return Err(ValidationError::new(
+            "subgraph.chains must contain at least one chain",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -219,16 +235,14 @@ mod tests {
 
     // ── Shared test constants — required-env values repeated across tests ───
     const TEST_SUBGRAPH_URL: &str = "https://example.com/sg";
-    const TEST_SUBGRAPH_CHAIN_ID: &str = "421614";
     const TEST_DATABASE_URL: &str = "postgres://x:y@h/d";
 
     /// Subgraph + database env entries required by every load-then-validate test.
-    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 3] {
+    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 2] {
         [
-            ("NOX_OBSERVER_SUBGRAPH__URL", Some(TEST_SUBGRAPH_URL)),
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAIN_ID",
-                Some(TEST_SUBGRAPH_CHAIN_ID),
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL",
+                Some(TEST_SUBGRAPH_URL),
             ),
             ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
         ]
@@ -280,6 +294,11 @@ mod tests {
             assert_eq!(9000, config.server.port);
             assert_eq!(10, config.subgraph.poll_interval_seconds);
             assert_eq!(1000, config.subgraph.batch_size);
+            assert_eq!(1, config.subgraph.chains.len());
+            assert_eq!(
+                TEST_SUBGRAPH_URL,
+                config.subgraph.chains.get("421614").unwrap().url
+            );
             assert_eq!(5, config.database.max_connections);
             assert_eq!(2, config.nats.urls.len());
             assert!(config.nats.tls.enabled);
@@ -392,8 +411,7 @@ mod tests {
     fn load_returns_err_when_required_env_vars_missing() {
         temp_env::with_vars(
             [
-                ("NOX_OBSERVER_SUBGRAPH__URL", None::<&str>),
-                ("NOX_OBSERVER_SUBGRAPH__CHAIN_ID", None::<&str>),
+                ("NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL", None::<&str>),
                 ("NOX_OBSERVER_DATABASE__URL", None::<&str>),
             ],
             || {
@@ -487,6 +505,50 @@ mod tests {
             assert_eq!("bucket-chain-2", c2.bucket);
             assert_eq!(45, c2.timeout);
         });
+    }
+
+    #[test]
+    fn subgraph_parses_two_map_entries_when_two_chains_configured() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
+            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__1__URL",
+                Some("https://example.com/sg-mainnet"),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL",
+                Some("https://example.com/sg-arbitrum-sepolia"),
+            ),
+        ];
+        vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            config.validate().expect("should validate");
+            assert_eq!(2, config.subgraph.chains.len());
+            assert_eq!(
+                "https://example.com/sg-mainnet",
+                config.subgraph.chains.get("1").unwrap().url
+            );
+            assert_eq!(
+                "https://example.com/sg-arbitrum-sepolia",
+                config.subgraph.chains.get("421614").unwrap().url
+            );
+        });
+    }
+
+    #[test]
+    fn subgraph_validate_returns_err_when_chains_empty() {
+        let cfg = SubgraphConfig {
+            chains: HashMap::new(),
+            poll_interval_seconds: 10,
+            batch_size: 1000,
+        };
+        let result = cfg.validate();
+        assert!(
+            result.is_err(),
+            "validate should reject empty subgraph.chains"
+        );
     }
 
     #[test]

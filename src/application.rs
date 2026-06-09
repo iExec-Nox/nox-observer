@@ -1,12 +1,13 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::{Router, extract::FromRef, routing::get};
 use axum_prometheus::{
     Handle, MakeDefaultHandle, PrometheusMetricLayer, PrometheusMetricLayerBuilder,
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::signal;
+use tokio::task::JoinSet;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
@@ -32,7 +33,7 @@ pub struct Application {
     config: Config,
     state: AppState,
     prometheus_layer: PrometheusMetricLayer<'static>,
-    poller: Poller,
+    pollers: Vec<Poller>,
     nats_consumer: NatsConsumer,
     s3_resolver: S3Resolver,
 }
@@ -48,24 +49,22 @@ impl Application {
             .await
             .context("Failed to connect to the database")?;
 
-        let subgraph = SubgraphClient::new(config.subgraph.url.clone())
-            .context("Failed to build the subgraph client")?;
-
-        let chain_id: i32 = config
-            .subgraph
-            .chain_id
-            .try_into()
-            .context("subgraph.chain_id does not fit in i32")?;
-
-        let poller = Poller::new(
-            subgraph,
-            db.clone(),
-            chain_id,
-            Duration::from_secs(config.subgraph.poll_interval_seconds),
-            i64::from(config.subgraph.batch_size),
-        )
-        .await
-        .context("Failed to initialize the subgraph poller")?;
+        let poll_interval = Duration::from_secs(config.subgraph.poll_interval_seconds);
+        let batch_size = i64::from(config.subgraph.batch_size);
+        let mut pollers = Vec::with_capacity(config.subgraph.chains.len());
+        for (chain_id_str, chain_cfg) in &config.subgraph.chains {
+            let chain_id: i32 = chain_id_str.parse().with_context(|| {
+                format!("invalid chain_id key '{chain_id_str}' in subgraph.chains (expected i32)")
+            })?;
+            let subgraph = SubgraphClient::new(chain_cfg.url.clone())
+                .with_context(|| format!("Failed to build subgraph client for chain {chain_id}"))?;
+            let poller = Poller::new(subgraph, db.clone(), chain_id, poll_interval, batch_size)
+                .await
+                .with_context(|| {
+                    format!("Failed to initialize subgraph poller for chain {chain_id}")
+                })?;
+            pollers.push(poller);
+        }
 
         let nats_client = NatsClient::connect(&config.nats)
             .await
@@ -86,7 +85,7 @@ impl Application {
             config,
             state: AppState { metrics_handle },
             prometheus_layer,
-            poller,
+            pollers,
             nats_consumer,
             s3_resolver,
         })
@@ -114,15 +113,23 @@ impl Application {
 
         info!("Server bound to {}", addr);
 
-        let poller = self.poller;
         let nats_consumer = self.nats_consumer;
         let s3_resolver = self.s3_resolver;
         let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
+        let mut poller_set: JoinSet<Result<(), crate::errors::PollerError>> = JoinSet::new();
+        for poller in self.pollers {
+            poller_set.spawn(poller.run());
+        }
+
         tokio::select! {
-            res = poller.run() => {
-                error!("subgraph poller exited; bringing observer down");
-                res.context("subgraph poller failed")?;
+            res = poller_set.join_next() => {
+                error!("a subgraph poller exited; bringing observer down");
+                match res {
+                    Some(Ok(inner)) => inner.context("subgraph poller failed")?,
+                    Some(Err(e)) => return Err(anyhow!("subgraph poller task panicked: {e}")),
+                    None => return Err(anyhow!("no subgraph poller was spawned")),
+                }
             }
             res = nats_consumer.run() => {
                 error!("nats consumer exited; bringing observer down");

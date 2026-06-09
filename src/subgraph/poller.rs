@@ -28,7 +28,7 @@ impl Poller {
         poll_interval: Duration,
         batch_size: i64,
     ) -> Result<Self, sqlx::Error> {
-        let skip = db.load_skip().await?;
+        let skip = db.load_skip(chain_id).await?;
         Ok(Self {
             subgraph,
             db,
@@ -40,9 +40,9 @@ impl Poller {
     }
 
     pub async fn run(mut self) -> Result<(), PollerError> {
-        info!("poller starting; resuming from skip={}", self.skip);
+        info!(chain_id = self.chain_id, "poller starting; resuming from skip={}", self.skip);
         self.catch_up().await?;
-        info!("caught up at skip={}; entering live mode", self.skip);
+        info!(chain_id = self.chain_id, "caught up at skip={}; entering live mode", self.skip);
 
         let mut ticker = interval(self.poll_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -129,10 +129,10 @@ impl Poller {
             }
 
             self.skip += 1;
-            self.db.save_skip(self.skip).await?;
+            self.db.save_skip(self.chain_id, self.skip).await?;
         }
 
-        info!("polled {n} handles (skip={})", self.skip);
+        info!(chain_id = self.chain_id, "polled {n} handles (skip={})", self.skip);
         Ok(n)
     }
 }

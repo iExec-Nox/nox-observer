@@ -65,12 +65,13 @@ CREATE TABLE handle_parents (
 
 CREATE INDEX idx_handle_parents_parent ON handle_parents (parent_handle_id);
 
--- Pagination cursor of the subgraph poller. Single-row table.
+-- Pagination cursor of the subgraph poller. One row per configured chain, so
+-- multichain deployments resume independently after a restart.
 CREATE TABLE subgraph_poller_state (
-    id         SMALLINT    PRIMARY KEY DEFAULT 1,
+    chain_id   INT         PRIMARY KEY,
     skip       BIGINT      NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    CONSTRAINT singleton         CHECK (id = 1),
+    CONSTRAINT chain_id_positive CHECK (chain_id > 0),
     CONSTRAINT skip_non_negative CHECK (skip >= 0)
 );
