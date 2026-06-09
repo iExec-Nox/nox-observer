@@ -183,10 +183,7 @@ enum Exit {
     Server(Result<(), std::io::Error>),
 }
 
-async fn drain_poller_set(
-    set: &mut JoinSet<PollerOutcome>,
-    task_to_chain: &HashMap<TaskId, i32>,
-) {
+async fn drain_poller_set(set: &mut JoinSet<PollerOutcome>, task_to_chain: &HashMap<TaskId, i32>) {
     while let Some(res) = set.join_next_with_id().await {
         match res {
             Ok((id, PollerOutcome::Cancelled)) => {
@@ -226,12 +223,13 @@ fn map_first_poller_exit(
         }
         Some(Ok((id, PollerOutcome::Exited(Ok(()))))) => {
             let chain = task_to_chain.get(&id);
-            anyhow!("subgraph poller for chain {chain:?} exited unexpectedly with Ok (run() should be infinite)")
+            anyhow!(
+                "subgraph poller for chain {chain:?} exited unexpectedly with Ok (run() should be infinite)"
+            )
         }
         Some(Ok((id, PollerOutcome::Exited(Err(e))))) => {
             let chain = task_to_chain.get(&id);
-            anyhow::Error::new(e)
-                .context(format!("subgraph poller for chain {chain:?} failed"))
+            anyhow::Error::new(e).context(format!("subgraph poller for chain {chain:?} failed"))
         }
         Some(Err(join_err)) => {
             let chain = task_to_chain.get(&join_err.id());
