@@ -36,9 +36,8 @@ impl Db {
     /// Builds the pooled Postgres connection.
     ///
     /// When TLS is enabled the connection uses `sslmode=require`: traffic is
-    /// encrypted but the server certificate is not verified, overriding any
-    /// weaker `sslmode` in the connection string. When disabled the connection
-    /// is plaintext for local development.
+    /// encrypted but the server certificate is not verified. When disabled the
+    /// connection is plaintext for local development.
     pub async fn connect(config: &DatabaseConfig) -> Result<Self, sqlx::Error> {
         let mut opts = PgConnectOptions::from_str(&config.url)?;
         if config.tls_enabled {

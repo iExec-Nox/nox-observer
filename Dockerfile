@@ -3,7 +3,7 @@ FROM rust:1.94.0-alpine3.23 AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache openssl-dev=3.5.6-r0 openssl-libs-static=3.5.6-r0
+RUN apk add --no-cache openssl-dev=3.5.7-r0 openssl-libs-static=3.5.7-r0
 
 # Copy manifest and source files
 COPY Cargo.toml Cargo.lock ./
