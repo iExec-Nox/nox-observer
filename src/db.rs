@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use chrono::{DateTime, Utc};
 use sqlx::{
     PgPool,
@@ -39,7 +37,12 @@ impl Db {
     /// encrypted but the server certificate is not verified. When disabled the
     /// connection is plaintext for local development.
     pub async fn connect(config: &DatabaseConfig) -> Result<Self, sqlx::Error> {
-        let mut opts = PgConnectOptions::from_str(&config.url)?;
+        let mut opts = PgConnectOptions::new()
+            .host(&config.host)
+            .port(config.port)
+            .username(&config.user)
+            .password(&config.password)
+            .database(&config.dbname);
         if config.tls_enabled {
             opts = opts.ssl_mode(PgSslMode::Require);
         } else {
