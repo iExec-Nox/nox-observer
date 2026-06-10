@@ -125,7 +125,8 @@ impl NatsConsumer {
     ///
     /// Follows the 2-tier ack policy: poison payloads (deserialize or extract
     /// failures) are ack-discarded, while DB errors are left un-acked so
-    /// JetStream redelivers.
+    /// JetStream redelivers. Messages from chains absent from `allowed_chains`
+    /// are also ack-discarded (no subject-level filter possible upstream).
     async fn process_message(&self, msg: jetstream::Message) {
         let tx_msg: TransactionMessage = match serde_json::from_slice(&msg.payload) {
             Ok(v) => v,
@@ -138,11 +139,6 @@ impl NatsConsumer {
             }
         };
 
-        // Skip + ACK messages from chains we don't index (no subgraph/S3 config).
-        // The broker keeps delivering everything (no subject-level filter possible
-        // until upstream adds chain_id to the subject), so we drop here. The
-        // i32::try_from also catches the (theoretical) overflow case: a chain_id
-        // that doesn't fit in i32 can't be in the configured set anyway.
         let configured =
             i32::try_from(tx_msg.chain_id).is_ok_and(|id| self.allowed_chains.contains(&id));
         if !configured {

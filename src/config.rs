@@ -7,6 +7,7 @@ use tracing::debug;
 use validator::{Validate, ValidationError};
 
 #[derive(Debug, Deserialize, Validate)]
+#[validate(schema(function = "validate_chain_consistency"))]
 pub struct Config {
     #[validate(nested)]
     pub server: ServerConfig,
@@ -18,6 +19,34 @@ pub struct Config {
     pub nats: NatsConfig,
     #[validate(nested)]
     pub s3: S3Config,
+}
+
+/// Cross-field check: every subgraph-configured chain must have a matching S3
+/// bucket, otherwise the poller would ingest handles whose ciphertexts could
+/// never be resolved (stuck `processed_by_s3 = false` forever). The reverse
+/// direction (S3 without subgraph) is allowed: NATS may still populate those.
+fn validate_chain_consistency(config: &Config) -> Result<(), ValidationError> {
+    let s3_chains: std::collections::HashSet<&str> =
+        config.s3.chains.keys().map(String::as_str).collect();
+    let missing: Vec<&str> = config
+        .subgraph
+        .chains
+        .keys()
+        .map(String::as_str)
+        .filter(|id| !s3_chains.contains(id))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(ValidationError::new("chain_consistency").with_message(
+            format!(
+                "subgraph poller is configured for chain(s) {missing:?} but no matching S3 \
+                 bucket is configured. Either add the S3 config for these chain(s) or remove \
+                 them from subgraph.chains."
+            )
+            .into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -495,7 +524,11 @@ mod tests {
 
     #[test]
     fn s3_parses_two_map_entries_when_two_chains_configured() {
-        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
+            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_SUBGRAPH__CHAINS__1", Some(TEST_SUBGRAPH_URL)),
+            ("NOX_OBSERVER_SUBGRAPH__CHAINS__2", Some(TEST_SUBGRAPH_URL)),
+        ];
         vars.extend(nats_required_env());
         vars.extend([
             ("NOX_OBSERVER_S3__CHAINS__1__BUCKET", Some("bucket-chain-1")),
@@ -534,6 +567,10 @@ mod tests {
                 "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
                 Some("https://example.com/sg-arbitrum-sepolia"),
             ),
+            ("NOX_OBSERVER_S3__CHAINS__1__BUCKET", Some("bucket-chain-1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__ACCESS_KEY", Some("ak1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__SECRET_KEY", Some("sk1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__REGION", Some("eu-west-1")),
         ];
         vars.extend(nats_required_env());
         vars.extend(s3_required_env());

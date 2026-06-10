@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use axum::{Router, extract::FromRef, routing::get};
 use axum_prometheus::{
     Handle, MakeDefaultHandle, PrometheusMetricLayer, PrometheusMetricLayerBuilder,
@@ -44,8 +44,6 @@ impl Application {
             .with_allow_patterns(&["/", "/health", "/metrics"])
             .build();
         let metrics_handle = Handle::make_default_handle(Handle::default());
-
-        ensure_chain_consistency(&config)?;
 
         let db = Db::connect(&config.database.url, config.database.max_connections)
             .await
@@ -171,30 +169,6 @@ enum Exit {
     Nats(Result<(), crate::errors::ObserverError>),
     S3(Result<(), crate::errors::S3ResolverError>),
     Server(Result<(), std::io::Error>),
-}
-
-/// Refuse to start if any subgraph-configured chain lacks a matching S3 bucket:
-/// the poller would ingest handles whose ciphertexts could never be resolved,
-/// leaving them stuck `processed_by_s3 = false` forever. The reverse direction
-/// (S3 without subgraph) is allowed — NATS may still populate those rows.
-fn ensure_chain_consistency(config: &Config) -> Result<()> {
-    let s3_chains: std::collections::HashSet<&str> =
-        config.s3.chains.keys().map(String::as_str).collect();
-    let missing: Vec<&str> = config
-        .subgraph
-        .chains
-        .keys()
-        .map(String::as_str)
-        .filter(|id| !s3_chains.contains(id))
-        .collect();
-    if !missing.is_empty() {
-        return Err(anyhow!(
-            "config inconsistency: subgraph poller is configured for chain(s) {missing:?} \
-             but no matching S3 bucket is configured. Either add the S3 config for these \
-             chain(s) or remove them from subgraph.chains."
-        ));
-    }
-    Ok(())
 }
 
 async fn shutdown_signal() {
