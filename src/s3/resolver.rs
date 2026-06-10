@@ -80,16 +80,22 @@ impl S3Resolver {
             return Ok(false);
         }
         let fetched = candidates.len();
-        let saturated = (fetched as i64) >= self.batch_size;
+        let page_full = (fetched as i64) >= self.batch_size;
         let present = self.s3.filter_present(&candidates).await?;
         if present.is_empty() {
-            return Ok(saturated);
+            return Ok(false);
         }
         let resolved: Vec<_> = present
             .into_iter()
             .map(|(handle_id, s3_last_modified, _)| (handle_id, s3_last_modified))
             .collect();
         let n = self.db.mark_resolved_by_s3(&resolved).await?;
+        // "Saturated" means: DB page was full AND we actually made progress.
+        // Both conditions must hold to justify looping immediately:
+        // - page_full alone is not enough: a backlog of not-yet-uploaded handles
+        //   would hot-loop without progress (re-HEAD the same missing keys).
+        // - progress alone (page_full = false) means we've caught up with writers.
+        let saturated = page_full && n > 0;
         info!(
             resolved = n,
             fetched, saturated, "s3 resolver marked handles resolved"
