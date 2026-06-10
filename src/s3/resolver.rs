@@ -37,15 +37,25 @@ impl S3Resolver {
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
-            ticker.tick().await;
-            // Errors never break the loop: the next tick is the natural retry.
+            // Sleep between drains only when we've caught up (last batch was
+            // not full). When there is backlog we loop immediately to drain at
+            // full speed; the semaphore in `S3Client` still caps S3 concurrency.
+            // Errors never break the loop: the next iteration is the natural retry.
             // Transient failures (network, 5xx) log at warn, permanent ones at
             // error so a misconfiguration stays visible without halting the loop.
-            if let Err(e) = self.resolve_once().await {
-                if e.is_transient() {
-                    warn!("s3 resolve tick failed (transient): {e}");
-                } else {
-                    error!("s3 resolve tick failed: {e}");
+            match self.resolve_once().await {
+                Ok(saturated) => {
+                    if !saturated {
+                        ticker.tick().await;
+                    }
+                }
+                Err(e) => {
+                    if e.is_transient() {
+                        warn!("s3 resolve tick failed (transient): {e}");
+                    } else {
+                        error!("s3 resolve tick failed: {e}");
+                    }
+                    ticker.tick().await;
                 }
             }
         }
@@ -54,22 +64,28 @@ impl S3Resolver {
     /// Fetch one batch of unresolved handles, keep those whose ciphertext is
     /// already present in S3, and mark them resolved.
     ///
+    /// Returns `Ok(true)` when the DB fetch returned a full `batch_size` page,
+    /// signalling there is likely more backlog to drain immediately. Returns
+    /// `Ok(false)` once the batch is incomplete (caught up with the writers).
+    ///
     /// `resolved_at` is set from the S3 upload time, which may predate the
     /// on-chain `block_timestamp`; the DB clamps it with
     /// `GREATEST(resolved_at, block_timestamp)` to keep the resolution time
     /// monotonic relative to emission.
-    async fn resolve_once(&self) -> Result<(), S3ResolverError> {
+    async fn resolve_once(&self) -> Result<bool, S3ResolverError> {
         let chains = self.s3.configured_chains();
         let candidates = self
             .db
             .fetch_unresolved_handles(&chains, self.batch_size)
             .await?;
+        let fetched = candidates.len();
+        let saturated = (fetched as i64) >= self.batch_size;
         if candidates.is_empty() {
-            return Ok(());
+            return Ok(saturated);
         }
         let present = self.s3.filter_present(&candidates).await?;
         if present.is_empty() {
-            return Ok(());
+            return Ok(saturated);
         }
         let resolved: Vec<_> = present
             .into_iter()
@@ -78,9 +94,10 @@ impl S3Resolver {
         let n = self.db.mark_resolved_by_s3(&resolved).await?;
         info!(
             resolved = n,
-            fetched = candidates.len(),
+            fetched,
+            saturated,
             "s3 resolver marked handles resolved"
         );
-        Ok(())
+        Ok(saturated)
     }
 }
