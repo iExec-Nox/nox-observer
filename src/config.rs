@@ -721,8 +721,6 @@ mod tests {
 
     #[test]
     fn database_validate_returns_ok_for_password_with_reserved_chars() {
-        // Fake password reproducing the reserved characters seen in the field
-        // ('!', '}', '#', '='). As a discrete component it needs no encoding.
         database_config_with_password("aB1!E}Oe#QP0t=cL")
             .validate()
             .expect("password with reserved characters must be accepted");
@@ -766,9 +764,6 @@ mod tests {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
         vars.extend(nats_required_env());
         vars.extend(s3_required_env());
-        // Override the components we assert on. These come after required_non_nats_env
-        // (which also sets PASSWORD) so they win, and the password carries
-        // URL-reserved characters that must survive verbatim.
         vars.push(("NOX_OBSERVER_DATABASE__HOST", Some("db.internal")));
         vars.push(("NOX_OBSERVER_DATABASE__PORT", Some("6432")));
         vars.push(("NOX_OBSERVER_DATABASE__PASSWORD", Some("aB1!E}Oe#QP0t=cL")));
