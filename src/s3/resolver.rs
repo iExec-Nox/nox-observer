@@ -26,6 +26,10 @@ impl S3Resolver {
         }
     }
 
+    /// Drain unresolved handles in a loop, adapting cadence to the backlog:
+    /// sleep `poll_interval` only when the previous batch was incomplete (caught
+    /// up with the writers); otherwise loop immediately to clear backlog at full
+    /// speed. The semaphore in `S3Client` still caps S3 concurrency regardless.
     pub async fn run(self) -> Result<(), S3ResolverError> {
         info!(
             poll_interval = ?self.poll_interval,
@@ -37,12 +41,6 @@ impl S3Resolver {
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
-            // Sleep between drains only when we've caught up (last batch was
-            // not full). When there is backlog we loop immediately to drain at
-            // full speed; the semaphore in `S3Client` still caps S3 concurrency.
-            // Errors never break the loop: the next iteration is the natural retry.
-            // Transient failures (network, 5xx) log at warn, permanent ones at
-            // error so a misconfiguration stays visible without halting the loop.
             match self.resolve_once().await {
                 Ok(saturated) => {
                     if !saturated {
@@ -78,11 +76,11 @@ impl S3Resolver {
             .db
             .fetch_unresolved_handles(&chains, self.batch_size)
             .await?;
+        if candidates.is_empty() {
+            return Ok(false);
+        }
         let fetched = candidates.len();
         let saturated = (fetched as i64) >= self.batch_size;
-        if candidates.is_empty() {
-            return Ok(saturated);
-        }
         let present = self.s3.filter_present(&candidates).await?;
         if present.is_empty() {
             return Ok(saturated);
