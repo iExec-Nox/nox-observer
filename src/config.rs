@@ -237,7 +237,7 @@ impl Config {
             .set_default("subgraph.poll_interval_seconds", 10)?
             .set_default("subgraph.batch_size", 1000)?
             .set_default("database.max_connections", 5)?
-            .set_default("database.tls_enabled", true)?
+            .set_default("database.tls_enabled", false)?
             .set_default("nats.urls", Vec::<String>::new())?
             .set_default("nats.tls.enabled", true)?
             .set_default("nats.tls.ca", "")?
@@ -641,9 +641,10 @@ mod tests {
     // ── Database TLS tests ───────────────────────────────────────────────────
 
     #[test]
-    fn database_tls_default_is_enabled() {
-        // Build env without NOX_OBSERVER_DATABASE__TLS_ENABLED so the default (true) applies.
-        // required_non_nats_env() forces ENABLED=false, so we construct the list manually here.
+    fn database_tls_default_is_disabled() {
+        // Build env without NOX_OBSERVER_DATABASE__TLS_ENABLED so the default applies.
+        // required_non_nats_env() sets ENABLED=false explicitly, so we construct the
+        // list manually here to leave the var unset and exercise the default.
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
             (
                 "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
@@ -656,12 +657,12 @@ mod tests {
         temp_env::with_vars(vars, || {
             let config = Config::load().expect("should load with tls defaults");
             assert!(
-                config.database.tls_enabled,
-                "default tls_enabled must be true"
+                !config.database.tls_enabled,
+                "default tls_enabled must be false"
             );
             config
                 .validate()
-                .expect("require-mode tls needs no extra configuration");
+                .expect("plaintext default needs no extra configuration");
         });
     }
 

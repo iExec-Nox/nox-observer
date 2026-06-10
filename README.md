@@ -37,9 +37,9 @@ Prefer another client? Point any Postgres GUI at the `DATABASE_URL` from your `.
 
 The Postgres client connects over TLS, toggled by a single env var:
 
-- `NOX_OBSERVER_DATABASE__TLS_ENABLED` (default `true`)
+- `NOX_OBSERVER_DATABASE__TLS_ENABLED` (default `false`)
 
-When enabled the client uses `sslmode=require`: the connection is encrypted but the server certificate is not verified, which matches the trusted private network the managed database sits on. There is no client certificate; the client authenticates with its password. The local docker-compose Postgres is plaintext, so the committed `.env.example` sets `NOX_OBSERVER_DATABASE__TLS_ENABLED=false`. In production keep `NOX_OBSERVER_DATABASE__TLS_ENABLED=true`.
+When enabled the client uses `sslmode=require`: the connection is encrypted but the server certificate is not verified, which matches the trusted private network the managed database sits on. There is no client certificate; the client authenticates with its password. TLS defaults to off so the local docker-compose Postgres (plaintext) works out of the box. In production set `NOX_OBSERVER_DATABASE__TLS_ENABLED=true`.
 
 ## Subgraph schema
 
