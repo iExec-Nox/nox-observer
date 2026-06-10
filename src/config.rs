@@ -98,6 +98,7 @@ pub struct DatabaseConfig {
     pub url: String,
     #[validate(range(min = 1, max = 100))]
     pub max_connections: u32,
+    pub tls_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -236,6 +237,7 @@ impl Config {
             .set_default("subgraph.poll_interval_seconds", 10)?
             .set_default("subgraph.batch_size", 1000)?
             .set_default("database.max_connections", 5)?
+            .set_default("database.tls_enabled", true)?
             .set_default("nats.urls", Vec::<String>::new())?
             .set_default("nats.tls.enabled", true)?
             .set_default("nats.tls.ca", "")?
@@ -282,13 +284,14 @@ mod tests {
     const TEST_DATABASE_URL: &str = "postgres://x:y@h/d";
 
     /// Subgraph + database env entries required by every load-then-validate test.
-    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 2] {
+    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 3] {
         [
             (
                 "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
                 Some(TEST_SUBGRAPH_URL),
             ),
             ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_DATABASE__TLS_ENABLED", Some("false")),
         ]
     }
 
@@ -526,6 +529,7 @@ mod tests {
     fn s3_parses_two_map_entries_when_two_chains_configured() {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
             ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_DATABASE__TLS_ENABLED", Some("false")),
             ("NOX_OBSERVER_SUBGRAPH__CHAINS__1", Some(TEST_SUBGRAPH_URL)),
             ("NOX_OBSERVER_SUBGRAPH__CHAINS__2", Some(TEST_SUBGRAPH_URL)),
         ];
@@ -559,6 +563,7 @@ mod tests {
     fn subgraph_parses_two_map_entries_when_two_chains_configured() {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
             ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_DATABASE__TLS_ENABLED", Some("false")),
             (
                 "NOX_OBSERVER_SUBGRAPH__CHAINS__1",
                 Some("https://example.com/sg-mainnet"),
@@ -631,5 +636,46 @@ mod tests {
         let cfg = s3_chain_config_with_bucket("");
         let result = cfg.validate();
         assert!(result.is_err(), "validate should reject empty bucket");
+    }
+
+    // ── Database TLS tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn database_tls_default_is_enabled() {
+        // Build env without NOX_OBSERVER_DATABASE__TLS_ENABLED so the default (true) applies.
+        // required_non_nats_env() forces ENABLED=false, so we construct the list manually here.
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
+                Some(TEST_SUBGRAPH_URL),
+            ),
+            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+        ];
+        vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load with tls defaults");
+            assert!(
+                config.database.tls_enabled,
+                "default tls_enabled must be true"
+            );
+            config
+                .validate()
+                .expect("require-mode tls needs no extra configuration");
+        });
+    }
+
+    #[test]
+    fn database_tls_disabled_validates_ok() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            config
+                .validate()
+                .expect("should validate when tls disabled");
+            assert!(!config.database.tls_enabled);
+        });
     }
 }

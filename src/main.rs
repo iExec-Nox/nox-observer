@@ -7,6 +7,7 @@ pub mod handlers;
 pub mod nats;
 pub mod s3;
 pub mod subgraph;
+pub mod utils;
 
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

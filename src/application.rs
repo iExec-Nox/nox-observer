@@ -45,7 +45,7 @@ impl Application {
             .build();
         let metrics_handle = Handle::make_default_handle(Handle::default());
 
-        let db = Db::connect(&config.database.url, config.database.max_connections)
+        let db = Db::connect(&config.database)
             .await
             .context("Failed to connect to the database")?;
 
