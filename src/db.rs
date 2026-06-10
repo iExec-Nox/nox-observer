@@ -1,5 +1,12 @@
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{
+    PgPool,
+    postgres::{PgConnectOptions, PgPoolOptions, PgSslMode},
+};
+
+use crate::config::DatabaseConfig;
 
 const UPSERT_HANDLE_SQL: &str = include_str!("../sql/upsert_handle.sql");
 const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../sql/upsert_handle_parent.sql");
@@ -26,10 +33,21 @@ pub struct Db {
 }
 
 impl Db {
-    pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self, sqlx::Error> {
+    /// Builds the pooled Postgres connection.
+    ///
+    /// When TLS is enabled the connection uses `sslmode=require`: traffic is
+    /// encrypted but the server certificate is not verified. When disabled the
+    /// connection is plaintext for local development.
+    pub async fn connect(config: &DatabaseConfig) -> Result<Self, sqlx::Error> {
+        let mut opts = PgConnectOptions::from_str(&config.url)?;
+        if config.tls_enabled {
+            opts = opts.ssl_mode(PgSslMode::Require);
+        } else {
+            opts = opts.ssl_mode(PgSslMode::Disable);
+        }
         let pool = PgPoolOptions::new()
-            .max_connections(max_connections)
-            .connect(database_url)
+            .max_connections(config.max_connections)
+            .connect_with(opts)
             .await?;
         Ok(Self { pool })
     }

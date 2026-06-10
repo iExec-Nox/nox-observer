@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 
 use crate::config::{NatsConfig, TlsConfig};
 use crate::errors::ObserverError;
+use crate::utils::normalize_pem;
 
 /// Connection state for NATS client
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,21 +95,6 @@ impl NatsClient {
     pub fn state_receiver(&self) -> watch::Receiver<ConnectionState> {
         self.state_rx.clone()
     }
-}
-
-/// Normalizes a PEM string that may have been collapsed into a single line.
-fn normalize_pem(pem: &str) -> String {
-    let pem = pem.replace("\\n", "\n");
-    let normalized = pem
-        .trim_end()
-        .replace("----- ", "-----\n")
-        .replace(" -----", "\n-----");
-    let trimmed = normalized
-        .lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n");
-    trimmed + "\n"
 }
 
 /// Build an in-memory rustls `ClientConfig` from PEM strings supplied via env vars.

@@ -33,6 +33,14 @@ Register the Postgres server inside pgAdmin with host `postgres`, port `5432`, a
 Prefer another client? Point any Postgres GUI at the `DATABASE_URL` from your `.env`
 (default: `postgres://nox_user:nox_password@localhost:5432/nox_observer`). A few good ones: [DBeaver](https://dbeaver.io/), [TablePlus](https://tableplus.com/), [Postico](https://eggerapps.at/postico2/).
 
+## Database TLS
+
+The Postgres client connects over TLS, toggled by a single env var:
+
+- `NOX_OBSERVER_DATABASE__TLS_ENABLED` (default `false`)
+
+When enabled the client uses `sslmode=require`: the connection is encrypted but the server certificate is not verified, which matches the trusted private network the managed database sits on. There is no client certificate; the client authenticates with its password. TLS defaults to off so the local docker-compose Postgres (plaintext) works out of the box. In production set `NOX_OBSERVER_DATABASE__TLS_ENABLED=true`.
+
 ## Subgraph schema
 
 The file `generated/subgraph/schema.json` is the introspected schema of the upstream subgraph. The `graphql_client` derive macro reads it **at compile time** and generates Rust types for the queries in `src/subgraph/queries.graphql`.
