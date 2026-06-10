@@ -51,6 +51,13 @@ impl S3Resolver {
         }
     }
 
+    /// Fetch one batch of unresolved handles, keep those whose ciphertext is
+    /// already present in S3, and mark them resolved.
+    ///
+    /// `resolved_at` is set from the S3 upload time, which may predate the
+    /// on-chain `block_timestamp`; the DB clamps it with
+    /// `GREATEST(resolved_at, block_timestamp)` to keep the resolution time
+    /// monotonic relative to emission.
     async fn resolve_once(&self) -> Result<(), S3ResolverError> {
         let chains = self.s3.configured_chains();
         let candidates = self
@@ -64,20 +71,6 @@ impl S3Resolver {
         if present.is_empty() {
             return Ok(());
         }
-        // Note: s3_last_modified can legitimately precede block_timestamp.
-        // Two origins for a handle:
-        //   1. Created on-chain as a computation result (FHE op output): the
-        //      ciphertext is uploaded to S3 after the tx, so normally
-        //      s3_last_modified >= block_timestamp.
-        //   2. Created off-chain via the handle gateway from a clear value
-        //      (e.g. encrypted input to a contract call): the gateway uploads
-        //      the ciphertext to S3 first, *then* the on-chain reference is
-        //      emitted. In this case s3_last_modified < block_timestamp by
-        //      design.
-        // On top of that, handle_id can be referenced by many on-chain events over
-        // time, the recorded s3_last_modified stays the original upload date.
-        // The SQL clamp (GREATEST(resolved_at, block_timestamp)) keeps the
-        // resolved_after_emission CHECK satisfied in cases 2 and 3.
         let resolved: Vec<_> = present
             .into_iter()
             .map(|(handle_id, s3_last_modified, _)| (handle_id, s3_last_modified))
