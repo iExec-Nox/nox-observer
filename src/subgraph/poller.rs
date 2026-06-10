@@ -6,12 +6,12 @@ use tracing::{error, info, warn};
 
 use super::client::SubgraphClient;
 use crate::db::{Db, NewHandle};
-use crate::errors::PollerError;
+use crate::errors::SubgraphPollerError;
 
 const MAX_CONSECUTIVE_RETRIES: u32 = 5;
 const MAX_BACKOFF_EXPONENT: u32 = 5; // 2^5 = 32s cap per attempt
 
-pub struct Poller {
+pub struct SubgraphPoller {
     subgraph: SubgraphClient,
     db: Db,
     chain_id: i32,
@@ -20,7 +20,7 @@ pub struct Poller {
     skip: i64,
 }
 
-impl Poller {
+impl SubgraphPoller {
     pub async fn new(
         subgraph: SubgraphClient,
         db: Db,
@@ -28,7 +28,7 @@ impl Poller {
         poll_interval: Duration,
         batch_size: i64,
     ) -> Result<Self, sqlx::Error> {
-        let skip = db.load_skip().await?;
+        let skip = db.load_skip(chain_id).await?;
         Ok(Self {
             subgraph,
             db,
@@ -39,10 +39,16 @@ impl Poller {
         })
     }
 
-    pub async fn run(mut self) -> Result<(), PollerError> {
-        info!("poller starting; resuming from skip={}", self.skip);
+    pub async fn run(mut self) -> Result<(), SubgraphPollerError> {
+        info!(
+            chain_id = self.chain_id,
+            "poller starting; resuming from skip={}", self.skip
+        );
         self.catch_up().await?;
-        info!("caught up at skip={}; entering live mode", self.skip);
+        info!(
+            chain_id = self.chain_id,
+            "caught up at skip={}; entering live mode", self.skip
+        );
 
         let mut ticker = interval(self.poll_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -58,7 +64,7 @@ impl Poller {
 
     /// Walk the whole history at full speed, retrying on transient errors with
     /// exponential backoff. Stops when a page is non-full (history caught up).
-    async fn catch_up(&mut self) -> Result<(), PollerError> {
+    async fn catch_up(&mut self) -> Result<(), SubgraphPollerError> {
         let mut consecutive_failures: u32 = 0;
 
         loop {
@@ -95,7 +101,7 @@ impl Poller {
         }
     }
 
-    async fn fetch_and_process_page(&mut self) -> Result<usize, PollerError> {
+    async fn fetch_and_process_page(&mut self) -> Result<usize, SubgraphPollerError> {
         let data = self
             .subgraph
             .fetch_handles(self.skip, self.batch_size)
@@ -129,10 +135,13 @@ impl Poller {
             }
 
             self.skip += 1;
-            self.db.save_skip(self.skip).await?;
+            self.db.save_skip(self.chain_id, self.skip).await?;
         }
 
-        info!("polled {n} handles (skip={})", self.skip);
+        info!(
+            chain_id = self.chain_id,
+            "polled {n} handles (skip={})", self.skip
+        );
         Ok(n)
     }
 }

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -15,7 +16,7 @@ use crate::db::Db;
 use crate::handlers;
 use crate::nats::{NatsClient, NatsConsumer};
 use crate::s3::{S3Client, S3Resolver};
-use crate::subgraph::{Poller, SubgraphClient};
+use crate::subgraph::{SubgraphClient, SubgraphPoller, SubgraphPollerSupervisor};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -32,7 +33,7 @@ pub struct Application {
     config: Config,
     state: AppState,
     prometheus_layer: PrometheusMetricLayer<'static>,
-    poller: Poller,
+    subgraph_pollers: Vec<(i32, SubgraphPoller)>,
     nats_consumer: NatsConsumer,
     s3_resolver: S3Resolver,
 }
@@ -48,29 +49,42 @@ impl Application {
             .await
             .context("Failed to connect to the database")?;
 
-        let subgraph = SubgraphClient::new(config.subgraph.url.clone())
-            .context("Failed to build the subgraph client")?;
+        let poll_interval = Duration::from_secs(config.subgraph.poll_interval_seconds);
+        let batch_size = i64::from(config.subgraph.batch_size);
+        let mut subgraph_pollers = Vec::with_capacity(config.subgraph.chains.len());
+        for (chain_id_str, url) in &config.subgraph.chains {
+            // `validate_subgraph_chains` already enforced this parses as i32, so
+            // an unwrap-like context is enough; if it ever fires it's a code bug.
+            let chain_id: i32 = chain_id_str.parse().with_context(|| {
+                format!("invalid chain_id key '{chain_id_str}' in subgraph.chains (expected i32)")
+            })?;
+            let subgraph = SubgraphClient::new(url.clone())
+                .with_context(|| format!("Failed to build subgraph client for chain {chain_id}"))?;
+            let poller =
+                SubgraphPoller::new(subgraph, db.clone(), chain_id, poll_interval, batch_size)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to initialize subgraph poller for chain {chain_id}")
+                    })?;
+            subgraph_pollers.push((chain_id, poller));
+        }
 
-        let chain_id: i32 = config
+        // NATS ingests events from every chain published upstream. To keep the
+        // observer self-consistent, restrict the consumer to the chains we can
+        // actually serve downstream (i.e. those with a subgraph or S3 config).
+        let allowed_chains: HashSet<i32> = config
             .subgraph
-            .chain_id
-            .try_into()
-            .context("subgraph.chain_id does not fit in i32")?;
-
-        let poller = Poller::new(
-            subgraph,
-            db.clone(),
-            chain_id,
-            Duration::from_secs(config.subgraph.poll_interval_seconds),
-            i64::from(config.subgraph.batch_size),
-        )
-        .await
-        .context("Failed to initialize the subgraph poller")?;
+            .chains
+            .keys()
+            .chain(config.s3.chains.keys())
+            .filter_map(|s| s.parse::<i32>().ok())
+            .collect();
 
         let nats_client = NatsClient::connect(&config.nats)
             .await
             .context("initializing NATS client")?;
-        let nats_consumer = NatsConsumer::new(nats_client, db.clone(), config.nats.clone());
+        let nats_consumer =
+            NatsConsumer::new(nats_client, db.clone(), config.nats.clone(), allowed_chains);
 
         let s3_client = S3Client::new(&config.s3)
             .await
@@ -86,7 +100,7 @@ impl Application {
             config,
             state: AppState { metrics_handle },
             prometheus_layer,
-            poller,
+            subgraph_pollers,
             nats_consumer,
             s3_resolver,
         })
@@ -114,31 +128,47 @@ impl Application {
 
         info!("Server bound to {}", addr);
 
-        let poller = self.poller;
         let nats_consumer = self.nats_consumer;
         let s3_resolver = self.s3_resolver;
         let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
-        tokio::select! {
-            res = poller.run() => {
-                error!("subgraph poller exited; bringing observer down");
-                res.context("subgraph poller failed")?;
+        let mut supervisor = SubgraphPollerSupervisor::spawn(self.subgraph_pollers);
+
+        let exit = tokio::select! {
+            err = supervisor.wait_for_exit() => Exit::Poller(err),
+            res = nats_consumer.run() => Exit::Nats(res),
+            res = s3_resolver.run() => Exit::S3(res),
+            res = server => Exit::Server(res),
+        };
+
+        supervisor.shutdown().await;
+
+        match exit {
+            Exit::Server(res) => {
+                info!("Server shutdown complete");
+                res.context("Server encountered an error during execution")?;
+                Ok(())
             }
-            res = nats_consumer.run() => {
+            Exit::Nats(res) => {
                 error!("nats consumer exited; bringing observer down");
                 res.context("nats consumer failed")?;
+                Ok(())
             }
-            res = s3_resolver.run() => {
+            Exit::S3(res) => {
                 error!("s3 resolver exited; bringing observer down");
                 res.context("s3 resolver failed")?;
+                Ok(())
             }
-            res = server => {
-                res.context("Server encountered an error during execution")?;
-            }
+            Exit::Poller(err) => Err(err),
         }
-        info!("Server shutdown complete");
-        Ok(())
     }
+}
+
+enum Exit {
+    Poller(anyhow::Error),
+    Nats(Result<(), crate::errors::ObserverError>),
+    S3(Result<(), crate::errors::S3ResolverError>),
+    Server(Result<(), std::io::Error>),
 }
 
 async fn shutdown_signal() {

@@ -51,26 +51,25 @@ impl S3Resolver {
         }
     }
 
+    /// Fetch one batch of unresolved handles, keep those whose ciphertext is
+    /// already present in S3, and mark them resolved.
+    ///
+    /// `resolved_at` is set from the S3 upload time, which may predate the
+    /// on-chain `block_timestamp`; the DB clamps it with
+    /// `GREATEST(resolved_at, block_timestamp)` to keep the resolution time
+    /// monotonic relative to emission.
     async fn resolve_once(&self) -> Result<(), S3ResolverError> {
-        let candidates = self.db.fetch_unresolved_handles(self.batch_size).await?;
+        let chains = self.s3.configured_chains();
+        let candidates = self
+            .db
+            .fetch_unresolved_handles(&chains, self.batch_size)
+            .await?;
         if candidates.is_empty() {
             return Ok(());
         }
         let present = self.s3.filter_present(&candidates).await?;
         if present.is_empty() {
             return Ok(());
-        }
-        for (handle_id, s3_last_modified, block_timestamp) in &present {
-            if let Some(block_timestamp) = block_timestamp
-                && s3_last_modified < block_timestamp
-            {
-                warn!(
-                    handle_id = %handle_id,
-                    block_timestamp = %block_timestamp,
-                    s3_last_modified = %s3_last_modified,
-                    "s3 resolved_at precedes on-chain emission; resolved_at clamped to block_timestamp"
-                );
-            }
         }
         let resolved: Vec<_> = present
             .into_iter()

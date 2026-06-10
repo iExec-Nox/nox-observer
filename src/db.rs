@@ -61,20 +61,23 @@ impl Db {
         Ok(())
     }
 
-    /// Returns the persisted subgraph poller skip, or 0 if absent.
-    pub async fn load_skip(&self) -> Result<i64, sqlx::Error> {
-        let row: Option<(i64,)> = sqlx::query_as("SELECT skip FROM subgraph_poller_state")
-            .fetch_optional(&self.pool)
-            .await?;
+    /// Returns the persisted subgraph poller skip for `chain_id`, or 0 if absent.
+    pub async fn load_skip(&self, chain_id: i32) -> Result<i64, sqlx::Error> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT skip FROM subgraph_poller_state WHERE chain_id = $1")
+                .bind(chain_id)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(s,)| s).unwrap_or(0))
     }
 
-    pub async fn save_skip(&self, skip: i64) -> Result<(), sqlx::Error> {
+    pub async fn save_skip(&self, chain_id: i32, skip: i64) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO subgraph_poller_state (skip) VALUES ($1)
-             ON CONFLICT (id) DO UPDATE
+            "INSERT INTO subgraph_poller_state (chain_id, skip) VALUES ($1, $2)
+             ON CONFLICT (chain_id) DO UPDATE
                 SET skip = EXCLUDED.skip, updated_at = now()",
         )
+        .bind(chain_id)
         .bind(skip)
         .execute(&self.pool)
         .await?;
@@ -83,15 +86,21 @@ impl Db {
 
     pub async fn fetch_unresolved_handles(
         &self,
+        chain_ids: &[i32],
         limit: i64,
     ) -> Result<Vec<(String, i32, Option<DateTime<Utc>>)>, sqlx::Error> {
+        if chain_ids.is_empty() {
+            return Ok(Vec::new());
+        }
         let rows: Vec<(String, i32, Option<DateTime<Utc>>)> = sqlx::query_as(
             "SELECT handle_id, chain_id, block_timestamp
              FROM handles
              WHERE NOT processed_by_s3
+               AND chain_id = ANY($1)
              ORDER BY block_timestamp DESC NULLS FIRST
-             LIMIT $1",
+             LIMIT $2",
         )
+        .bind(chain_ids)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;

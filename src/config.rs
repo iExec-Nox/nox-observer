@@ -7,6 +7,7 @@ use tracing::debug;
 use validator::{Validate, ValidationError};
 
 #[derive(Debug, Deserialize, Validate)]
+#[validate(schema(function = "validate_chain_consistency"))]
 pub struct Config {
     #[validate(nested)]
     pub server: ServerConfig,
@@ -20,22 +21,75 @@ pub struct Config {
     pub s3: S3Config,
 }
 
+/// Cross-field check: every subgraph-configured chain must have a matching S3
+/// bucket, otherwise the poller would ingest handles whose ciphertexts could
+/// never be resolved (stuck `processed_by_s3 = false` forever). The reverse
+/// direction (S3 without subgraph) is allowed: NATS may still populate those.
+fn validate_chain_consistency(config: &Config) -> Result<(), ValidationError> {
+    let s3_chains: std::collections::HashSet<&str> =
+        config.s3.chains.keys().map(String::as_str).collect();
+    let missing: Vec<&str> = config
+        .subgraph
+        .chains
+        .keys()
+        .map(String::as_str)
+        .filter(|id| !s3_chains.contains(id))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(ValidationError::new("chain_consistency").with_message(
+            format!(
+                "subgraph poller is configured for chain(s) {missing:?} but no matching S3 \
+                 bucket is configured. Either add the S3 config for these chain(s) or remove \
+                 them from subgraph.chains."
+            )
+            .into(),
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
 }
 
+/// Subgraph poller configuration.
+///
+/// `chains` maps chain IDs (as strings, because `config` deserializes map keys
+/// as strings) to per-chain subgraph endpoint URLs. The custom validator below
+/// enforces: at least one chain, every key parses as `i32` (matches the `INT`
+/// `chain_id` column), every URL is well-formed.
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct SubgraphConfig {
-    #[validate(url)]
-    pub url: String,
-    #[validate(range(min = 1))]
-    pub chain_id: u64,
+    #[validate(custom(function = "validate_subgraph_chains"))]
+    pub chains: HashMap<String, String>,
     #[validate(range(min = 1, max = 3600))]
     pub poll_interval_seconds: u64,
     #[validate(range(min = 1, max = 1000))]
     pub batch_size: u32,
+}
+
+fn validate_subgraph_chains(chains: &HashMap<String, String>) -> Result<(), ValidationError> {
+    if chains.is_empty() {
+        return Err(ValidationError::new(
+            "subgraph.chains must contain at least one chain",
+        ));
+    }
+    for (chain_id, url) in chains {
+        if chain_id.parse::<i32>().is_err() {
+            return Err(ValidationError::new("invalid_chain_id").with_message(
+                format!("subgraph.chains key '{chain_id}' must be a valid i32").into(),
+            ));
+        }
+        if reqwest::Url::parse(url).is_err() {
+            return Err(ValidationError::new("invalid_chain_url").with_message(
+                format!("subgraph.chains[{chain_id}] is not a valid URL: {url}").into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -165,6 +219,12 @@ fn validate_s3_chains_non_empty(
             "s3.chains must contain at least one chain",
         ));
     }
+    for chain_id in chains.keys() {
+        if chain_id.parse::<i32>().is_err() {
+            return Err(ValidationError::new("invalid_chain_id")
+                .with_message(format!("s3.chains key '{chain_id}' must be a valid i32").into()));
+        }
+    }
     Ok(())
 }
 
@@ -187,7 +247,7 @@ impl Config {
             .set_default("nats.max_ack_pending", 10)?
             .set_default("nats.max_batch", 10)?
             .set_default("s3.poll_interval_seconds", 10)?
-            .set_default("s3.batch_size", 500)?
+            .set_default("s3.batch_size", 1000)?
             .set_default("s3.max_concurrent_requests", 16)?
             .add_source(
                 Environment::with_prefix("NOX_OBSERVER")
@@ -219,16 +279,14 @@ mod tests {
 
     // ── Shared test constants — required-env values repeated across tests ───
     const TEST_SUBGRAPH_URL: &str = "https://example.com/sg";
-    const TEST_SUBGRAPH_CHAIN_ID: &str = "421614";
     const TEST_DATABASE_URL: &str = "postgres://x:y@h/d";
 
     /// Subgraph + database env entries required by every load-then-validate test.
-    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 3] {
+    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 2] {
         [
-            ("NOX_OBSERVER_SUBGRAPH__URL", Some(TEST_SUBGRAPH_URL)),
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAIN_ID",
-                Some(TEST_SUBGRAPH_CHAIN_ID),
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
+                Some(TEST_SUBGRAPH_URL),
             ),
             ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
         ]
@@ -280,6 +338,11 @@ mod tests {
             assert_eq!(9000, config.server.port);
             assert_eq!(10, config.subgraph.poll_interval_seconds);
             assert_eq!(1000, config.subgraph.batch_size);
+            assert_eq!(1, config.subgraph.chains.len());
+            assert_eq!(
+                TEST_SUBGRAPH_URL,
+                config.subgraph.chains.get("421614").unwrap().as_str()
+            );
             assert_eq!(5, config.database.max_connections);
             assert_eq!(2, config.nats.urls.len());
             assert!(config.nats.tls.enabled);
@@ -289,7 +352,7 @@ mod tests {
             assert_eq!(10, config.nats.max_ack_pending);
             assert_eq!(10, config.nats.max_batch);
             assert_eq!(10, config.s3.poll_interval_seconds);
-            assert_eq!(500, config.s3.batch_size);
+            assert_eq!(1000, config.s3.batch_size);
             assert_eq!(16, config.s3.max_concurrent_requests);
             assert_eq!(1, config.s3.chains.len());
         });
@@ -392,8 +455,7 @@ mod tests {
     fn load_returns_err_when_required_env_vars_missing() {
         temp_env::with_vars(
             [
-                ("NOX_OBSERVER_SUBGRAPH__URL", None::<&str>),
-                ("NOX_OBSERVER_SUBGRAPH__CHAIN_ID", None::<&str>),
+                ("NOX_OBSERVER_SUBGRAPH__CHAINS__421614", None::<&str>),
                 ("NOX_OBSERVER_DATABASE__URL", None::<&str>),
             ],
             || {
@@ -415,7 +477,7 @@ mod tests {
             let config = Config::load().expect("should load");
             config.validate().expect("should validate");
             assert_eq!(10, config.s3.poll_interval_seconds);
-            assert_eq!(500, config.s3.batch_size);
+            assert_eq!(1000, config.s3.batch_size);
             assert_eq!(16, config.s3.max_concurrent_requests);
             let chain = config
                 .s3
@@ -462,7 +524,11 @@ mod tests {
 
     #[test]
     fn s3_parses_two_map_entries_when_two_chains_configured() {
-        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
+            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_SUBGRAPH__CHAINS__1", Some(TEST_SUBGRAPH_URL)),
+            ("NOX_OBSERVER_SUBGRAPH__CHAINS__2", Some(TEST_SUBGRAPH_URL)),
+        ];
         vars.extend(nats_required_env());
         vars.extend([
             ("NOX_OBSERVER_S3__CHAINS__1__BUCKET", Some("bucket-chain-1")),
@@ -487,6 +553,54 @@ mod tests {
             assert_eq!("bucket-chain-2", c2.bucket);
             assert_eq!(45, c2.timeout);
         });
+    }
+
+    #[test]
+    fn subgraph_parses_two_map_entries_when_two_chains_configured() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
+            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__1",
+                Some("https://example.com/sg-mainnet"),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
+                Some("https://example.com/sg-arbitrum-sepolia"),
+            ),
+            ("NOX_OBSERVER_S3__CHAINS__1__BUCKET", Some("bucket-chain-1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__ACCESS_KEY", Some("ak1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__SECRET_KEY", Some("sk1")),
+            ("NOX_OBSERVER_S3__CHAINS__1__REGION", Some("eu-west-1")),
+        ];
+        vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            config.validate().expect("should validate");
+            assert_eq!(2, config.subgraph.chains.len());
+            assert_eq!(
+                "https://example.com/sg-mainnet",
+                config.subgraph.chains.get("1").unwrap().as_str()
+            );
+            assert_eq!(
+                "https://example.com/sg-arbitrum-sepolia",
+                config.subgraph.chains.get("421614").unwrap().as_str()
+            );
+        });
+    }
+
+    #[test]
+    fn subgraph_validate_returns_err_when_chains_empty() {
+        let cfg = SubgraphConfig {
+            chains: HashMap::new(),
+            poll_interval_seconds: 10,
+            batch_size: 1000,
+        };
+        let result = cfg.validate();
+        assert!(
+            result.is_err(),
+            "validate should reject empty subgraph.chains"
+        );
     }
 
     #[test]

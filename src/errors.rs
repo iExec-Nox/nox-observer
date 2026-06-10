@@ -13,14 +13,16 @@ pub enum ObserverError {
     Nats(String),
 
     #[error("Subgraph poller error: {0}")]
-    Poller(#[from] PollerError),
+    SubgraphPoller(#[from] SubgraphPollerError),
 }
 
 impl IntoResponse for ObserverError {
     fn into_response(self) -> axum::response::Response {
         warn!("Request failed: {}", self);
         let status = match &self {
-            ObserverError::Nats(_) | ObserverError::Poller(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ObserverError::Nats(_) | ObserverError::SubgraphPoller(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         };
         (status, Json(json!({ "error": self.to_string() }))).into_response()
     }
@@ -59,7 +61,7 @@ pub type SubgraphResult<T> = Result<T, SubgraphError>;
 // ==================================
 
 #[derive(Debug, Error)]
-pub enum PollerError {
+pub enum SubgraphPollerError {
     #[error(transparent)]
     Subgraph(#[from] SubgraphError),
 
@@ -67,7 +69,7 @@ pub enum PollerError {
     Database(#[from] sqlx::Error),
 }
 
-impl PollerError {
+impl SubgraphPollerError {
     /// Errors that are likely to resolve on their own (network, transient DB).
     pub fn is_transient(&self) -> bool {
         match self {

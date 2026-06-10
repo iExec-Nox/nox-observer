@@ -6,6 +6,8 @@
 //!   (chain_id or block_number overflow) / no-ack on DB error
 //! - extracts handles per operator variant before upserting
 
+use std::collections::HashSet;
+
 use async_nats::jetstream;
 use futures_util::StreamExt;
 use tracing::{debug, error, info, warn};
@@ -20,14 +22,24 @@ pub struct NatsConsumer {
     nats_client: NatsClient,
     db: Db,
     config: NatsConfig,
+    /// Chains we want to ingest from NATS. Messages for any other `chain_id`
+    /// are silently ACK-discarded so the JetStream consumer doesn't redeliver
+    /// them. The set is built at startup from `subgraph.chains ∪ s3.chains`.
+    allowed_chains: HashSet<i32>,
 }
 
 impl NatsConsumer {
-    pub fn new(nats_client: NatsClient, db: Db, config: NatsConfig) -> Self {
+    pub fn new(
+        nats_client: NatsClient,
+        db: Db,
+        config: NatsConfig,
+        allowed_chains: HashSet<i32>,
+    ) -> Self {
         Self {
             nats_client,
             db,
             config,
+            allowed_chains,
         }
     }
 
@@ -113,7 +125,8 @@ impl NatsConsumer {
     ///
     /// Follows the 2-tier ack policy: poison payloads (deserialize or extract
     /// failures) are ack-discarded, while DB errors are left un-acked so
-    /// JetStream redelivers.
+    /// JetStream redelivers. Messages from chains absent from `allowed_chains`
+    /// are also ack-discarded (no subject-level filter possible upstream).
     async fn process_message(&self, msg: jetstream::Message) {
         let tx_msg: TransactionMessage = match serde_json::from_slice(&msg.payload) {
             Ok(v) => v,
@@ -125,6 +138,20 @@ impl NatsConsumer {
                 return;
             }
         };
+
+        let configured =
+            i32::try_from(tx_msg.chain_id).is_ok_and(|id| self.allowed_chains.contains(&id));
+        if !configured {
+            debug!(
+                chain_id = tx_msg.chain_id,
+                tx_hash = tx_msg.transaction_hash,
+                "ignoring NATS message for non-configured chain; ACK-discarding"
+            );
+            if let Err(ack_err) = msg.ack().await {
+                error!(error = %ack_err, "ACK after chain-filter skip failed");
+            }
+            return;
+        }
 
         let handles = match extract_handles(&tx_msg) {
             Ok(h) => h,
