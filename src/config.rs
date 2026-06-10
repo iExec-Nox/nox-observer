@@ -218,7 +218,7 @@ impl Config {
             .set_default("nats.max_ack_pending", 10)?
             .set_default("nats.max_batch", 10)?
             .set_default("s3.poll_interval_seconds", 10)?
-            .set_default("s3.batch_size", 500)?
+            .set_default("s3.batch_size", 1000)?
             .set_default("s3.max_concurrent_requests", 16)?
             .add_source(
                 Environment::with_prefix("NOX_OBSERVER")
@@ -323,7 +323,7 @@ mod tests {
             assert_eq!(10, config.nats.max_ack_pending);
             assert_eq!(10, config.nats.max_batch);
             assert_eq!(10, config.s3.poll_interval_seconds);
-            assert_eq!(500, config.s3.batch_size);
+            assert_eq!(1000, config.s3.batch_size);
             assert_eq!(16, config.s3.max_concurrent_requests);
             assert_eq!(1, config.s3.chains.len());
         });
@@ -448,7 +448,7 @@ mod tests {
             let config = Config::load().expect("should load");
             config.validate().expect("should validate");
             assert_eq!(10, config.s3.poll_interval_seconds);
-            assert_eq!(500, config.s3.batch_size);
+            assert_eq!(1000, config.s3.batch_size);
             assert_eq!(16, config.s3.max_concurrent_requests);
             let chain = config
                 .s3
