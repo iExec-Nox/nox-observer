@@ -94,9 +94,7 @@ impl S3Resolver {
         let n = self.db.mark_resolved_by_s3(&resolved).await?;
         info!(
             resolved = n,
-            fetched,
-            saturated,
-            "s3 resolver marked handles resolved"
+            fetched, saturated, "s3 resolver marked handles resolved"
         );
         Ok(saturated)
     }
