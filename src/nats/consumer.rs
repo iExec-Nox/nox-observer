@@ -50,7 +50,7 @@ impl NatsConsumer {
         let stream = jetstream
             .get_stream(&self.config.stream_name)
             .await
-            .map_err(|e| NatsError(format!("get_stream failed: {e}")))?;
+            .map_err(|e| NatsError::Stream(format!("get_stream failed: {e}")))?;
 
         let consumer = stream
             .get_or_create_consumer(
@@ -64,17 +64,17 @@ impl NatsConsumer {
                 },
             )
             .await
-            .map_err(|e| NatsError(format!("get_or_create_consumer failed: {e}")))?;
+            .map_err(|e| NatsError::Stream(format!("get_or_create_consumer failed: {e}")))?;
 
         let mut subscriber = consumer
             .stream()
             .max_messages_per_batch(
                 usize::try_from(self.config.max_batch)
-                    .map_err(|e| NatsError(format!("max_batch overflow: {e}")))?,
+                    .map_err(|e| NatsError::Stream(format!("max_batch overflow: {e}")))?,
             )
             .messages()
             .await
-            .map_err(|e| NatsError(format!("subscriber init failed: {e}")))?;
+            .map_err(|e| NatsError::Stream(format!("subscriber init failed: {e}")))?;
 
         let mut connected = *state_rx.borrow() == ConnectionState::Connected;
         info!(
@@ -215,12 +215,12 @@ impl NatsConsumer {
 /// per emitted handle, a single event may emit several rows, and `operator`
 /// varies across events.
 ///
-/// Returns `Err(NatsError(_))` when `chain_id` overflows i32 or
+/// Returns `Err(NatsError::Message(_))` when `chain_id` overflows i32 or
 /// `block_number` overflows i64 (both treated as poison: ACK-discarded by the
 /// caller).
 fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, NatsError> {
     let chain_id_i32 = i32::try_from(msg.chain_id).map_err(|_| {
-        NatsError(format!(
+        NatsError::Message(format!(
             "chain_id {} does not fit in i32 (handles.chain_id is INT)",
             msg.chain_id
         ))
@@ -229,7 +229,7 @@ fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, NatsError
     // schema CHECK accepts both cases but we pick one.
     let caller = format!("{:#x}", msg.caller);
     let block_number = i64::try_from(msg.block_number).map_err(|_| {
-        NatsError(format!(
+        NatsError::Message(format!(
             "block_number {} does not fit in i64",
             msg.block_number
         ))

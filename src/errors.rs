@@ -5,8 +5,14 @@ use thiserror::Error;
 // ==================================
 
 #[derive(Error, Debug)]
-#[error("NATS consumer error: {0}")]
-pub struct NatsError(pub String);
+pub enum NatsError {
+    #[error("NATS connect error: {0}")]
+    Connect(String),
+    #[error("NATS stream error: {0}")]
+    Stream(String),
+    #[error("NATS message error: {0}")]
+    Message(String),
+}
 
 // ==================================
 // Subgraph client error
