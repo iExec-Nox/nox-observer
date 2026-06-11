@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::client::S3Client;
 use crate::db::Db;
@@ -62,9 +62,10 @@ impl S3Resolver {
     /// Fetch one batch of unresolved handles, keep those whose ciphertext is
     /// already present in S3, and mark them resolved.
     ///
-    /// Returns `Ok(true)` when the DB fetch returned a full `batch_size` page,
-    /// signalling there is likely more backlog to drain immediately. Returns
-    /// `Ok(false)` once the batch is incomplete (caught up with the writers).
+    /// Returns `Ok(true)` only when the DB page was full **and** at least one
+    /// handle was actually resolved — both conditions are needed to justify
+    /// looping immediately. Page-full alone would hot-loop on not-yet-uploaded
+    /// handles; progress alone means we've caught up with the writers.
     ///
     /// `resolved_at` is set from the S3 upload time, which may predate the
     /// on-chain `block_timestamp`; the DB clamps it with
@@ -83,6 +84,7 @@ impl S3Resolver {
         let page_full = (fetched as i64) >= self.batch_size;
         let present = self.s3.filter_present(&candidates).await?;
         if present.is_empty() {
+            debug!(fetched, "s3 resolver tick: no handles present yet");
             return Ok(false);
         }
         let resolved: Vec<_> = present
@@ -90,11 +92,6 @@ impl S3Resolver {
             .map(|(handle_id, s3_last_modified, _)| (handle_id, s3_last_modified))
             .collect();
         let n = self.db.mark_resolved_by_s3(&resolved).await?;
-        // "Saturated" means: DB page was full AND we actually made progress.
-        // Both conditions must hold to justify looping immediately:
-        // - page_full alone is not enough: a backlog of not-yet-uploaded handles
-        //   would hot-loop without progress (re-HEAD the same missing keys).
-        // - progress alone (page_full = false) means we've caught up with writers.
         let saturated = page_full && n > 0;
         info!(
             resolved = n,
