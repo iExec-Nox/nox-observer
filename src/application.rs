@@ -166,7 +166,7 @@ impl Application {
 
 enum Exit {
     Poller(anyhow::Error),
-    Nats(Result<(), crate::errors::ObserverError>),
+    Nats(Result<(), crate::errors::NatsError>),
     S3(Result<(), crate::errors::S3ResolverError>),
     Server(Result<(), std::io::Error>),
 }

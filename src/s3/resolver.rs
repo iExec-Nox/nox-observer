@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::client::S3Client;
 use crate::db::Db;
@@ -26,6 +26,10 @@ impl S3Resolver {
         }
     }
 
+    /// Drain unresolved handles in a loop, adapting cadence to the backlog:
+    /// sleep `poll_interval` only when the previous batch was incomplete (caught
+    /// up with the writers); otherwise loop immediately to clear backlog at full
+    /// speed. The semaphore in `S3Client` still caps S3 concurrency regardless.
     pub async fn run(self) -> Result<(), S3ResolverError> {
         info!(
             poll_interval = ?self.poll_interval,
@@ -37,15 +41,19 @@ impl S3Resolver {
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
-            ticker.tick().await;
-            // Errors never break the loop: the next tick is the natural retry.
-            // Transient failures (network, 5xx) log at warn, permanent ones at
-            // error so a misconfiguration stays visible without halting the loop.
-            if let Err(e) = self.resolve_once().await {
-                if e.is_transient() {
-                    warn!("s3 resolve tick failed (transient): {e}");
-                } else {
-                    error!("s3 resolve tick failed: {e}");
+            match self.resolve_once().await {
+                Ok(saturated) => {
+                    if !saturated {
+                        ticker.tick().await;
+                    }
+                }
+                Err(e) => {
+                    if e.is_transient() {
+                        warn!("s3 resolve tick failed (transient): {e}");
+                    } else {
+                        error!("s3 resolve tick failed: {e}");
+                    }
+                    ticker.tick().await;
                 }
             }
         }
@@ -54,33 +62,41 @@ impl S3Resolver {
     /// Fetch one batch of unresolved handles, keep those whose ciphertext is
     /// already present in S3, and mark them resolved.
     ///
+    /// Returns `Ok(true)` only when the DB page was full **and** at least one
+    /// handle was actually resolved — both conditions are needed to justify
+    /// looping immediately. Page-full alone would hot-loop on not-yet-uploaded
+    /// handles; progress alone means we've caught up with the writers.
+    ///
     /// `resolved_at` is set from the S3 upload time, which may predate the
     /// on-chain `block_timestamp`; the DB clamps it with
     /// `GREATEST(resolved_at, block_timestamp)` to keep the resolution time
     /// monotonic relative to emission.
-    async fn resolve_once(&self) -> Result<(), S3ResolverError> {
+    async fn resolve_once(&self) -> Result<bool, S3ResolverError> {
         let chains = self.s3.configured_chains();
         let candidates = self
             .db
             .fetch_unresolved_handles(&chains, self.batch_size)
             .await?;
         if candidates.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
+        let fetched = candidates.len();
+        let page_full = (fetched as i64) >= self.batch_size;
         let present = self.s3.filter_present(&candidates).await?;
         if present.is_empty() {
-            return Ok(());
+            debug!(fetched, "s3 resolver tick: no handles present yet");
+            return Ok(false);
         }
         let resolved: Vec<_> = present
             .into_iter()
             .map(|(handle_id, s3_last_modified, _)| (handle_id, s3_last_modified))
             .collect();
         let n = self.db.mark_resolved_by_s3(&resolved).await?;
+        let saturated = page_full && n > 0;
         info!(
             resolved = n,
-            fetched = candidates.len(),
-            "s3 resolver marked handles resolved"
+            fetched, saturated, "s3 resolver marked handles resolved"
         );
-        Ok(())
+        Ok(saturated)
     }
 }

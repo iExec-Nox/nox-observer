@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::NatsConfig;
 use crate::db::{Db, NewHandle};
-use crate::errors::ObserverError;
+use crate::errors::NatsError;
 use crate::events::TransactionMessage;
 use crate::nats::client::{ConnectionState, NatsClient};
 
@@ -43,14 +43,14 @@ impl NatsConsumer {
         }
     }
 
-    pub async fn run(self) -> Result<(), ObserverError> {
+    pub async fn run(self) -> Result<(), NatsError> {
         let jetstream = self.nats_client.jetstream();
         let mut state_rx = self.nats_client.state_receiver();
 
         let stream = jetstream
             .get_stream(&self.config.stream_name)
             .await
-            .map_err(|e| ObserverError::Nats(format!("get_stream failed: {e}")))?;
+            .map_err(|e| NatsError::Stream(format!("get_stream failed: {e}")))?;
 
         let consumer = stream
             .get_or_create_consumer(
@@ -64,17 +64,17 @@ impl NatsConsumer {
                 },
             )
             .await
-            .map_err(|e| ObserverError::Nats(format!("get_or_create_consumer failed: {e}")))?;
+            .map_err(|e| NatsError::Stream(format!("get_or_create_consumer failed: {e}")))?;
 
         let mut subscriber = consumer
             .stream()
             .max_messages_per_batch(
                 usize::try_from(self.config.max_batch)
-                    .map_err(|e| ObserverError::Nats(format!("max_batch overflow: {e}")))?,
+                    .map_err(|e| NatsError::Stream(format!("max_batch overflow: {e}")))?,
             )
             .messages()
             .await
-            .map_err(|e| ObserverError::Nats(format!("subscriber init failed: {e}")))?;
+            .map_err(|e| NatsError::Stream(format!("subscriber init failed: {e}")))?;
 
         let mut connected = *state_rx.borrow() == ConnectionState::Connected;
         info!(
@@ -215,12 +215,12 @@ impl NatsConsumer {
 /// per emitted handle, a single event may emit several rows, and `operator`
 /// varies across events.
 ///
-/// Returns `Err(ObserverError::Nats(_))` when `chain_id` overflows i32 or
+/// Returns `Err(NatsError::Message(_))` when `chain_id` overflows i32 or
 /// `block_number` overflows i64 (both treated as poison: ACK-discarded by the
 /// caller).
-fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, ObserverError> {
+fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, NatsError> {
     let chain_id_i32 = i32::try_from(msg.chain_id).map_err(|_| {
-        ObserverError::Nats(format!(
+        NatsError::Message(format!(
             "chain_id {} does not fit in i32 (handles.chain_id is INT)",
             msg.chain_id
         ))
@@ -229,7 +229,7 @@ fn extract_handles(msg: &TransactionMessage) -> Result<Vec<NewHandle>, ObserverE
     // schema CHECK accepts both cases but we pick one.
     let caller = format!("{:#x}", msg.caller);
     let block_number = i64::try_from(msg.block_number).map_err(|_| {
-        ObserverError::Nats(format!(
+        NatsError::Message(format!(
             "block_number {} does not fit in i64",
             msg.block_number
         ))

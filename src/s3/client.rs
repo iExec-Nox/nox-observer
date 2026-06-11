@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -117,46 +117,23 @@ impl S3Client {
         }
     }
 
+    /// Dispatch a HEAD per candidate concurrently (throttled by the shared
+    /// semaphore) and keep only those whose ciphertext is present in S3.
     pub async fn filter_present(
         &self,
         candidates: &[(String, i32, Option<DateTime<Utc>>)],
     ) -> Result<Vec<(String, DateTime<Utc>, Option<DateTime<Utc>>)>, S3ResolverError> {
-        let configured_chains: HashSet<i32> = self.configured_chains().into_iter().collect();
-
-        // Skip (never error on) candidates for an unconfigured chain so a stray
-        // chain_id can't turn into a permanent error that aborts the whole tick.
-        // Given the nox stack is only deployed on configured chains, no upstream
-        // writer can produce a handle for an unconfigured chain, so this never
-        // fires in practice; it stays as a guard against config drift.
-        let filtered: Vec<(String, i32, Option<DateTime<Utc>>)> = candidates
-            .iter()
-            .filter(|(_, chain_id, _)| {
-                let configured = configured_chains.contains(chain_id);
-                if !configured {
-                    warn!(
-                        chain_id,
-                        "no S3 bucket configured for chain_id; skipping candidate"
-                    );
-                }
-                configured
-            })
-            .cloned()
-            .collect();
-
-        // Dispatch HEADs concurrently, throttled by the shared semaphore that
-        // caps in-flight S3 operations across all chains.
         let client = self;
-        let results = join_all(filtered.into_iter().map(
+        let results = join_all(candidates.iter().map(
             |(handle_id, chain_id, block_timestamp)| async move {
                 let _permit = client
                     .semaphore
                     .acquire()
                     .await
                     .map_err(|e| S3ResolverError::S3(format!("semaphore error: {e}")))?;
-                client
-                    .handle_exists(chain_id, &handle_id)
-                    .await
-                    .map(|ts| ts.map(|resolved_at| (handle_id, resolved_at, block_timestamp)))
+                client.handle_exists(*chain_id, handle_id).await.map(|ts| {
+                    ts.map(|resolved_at| (handle_id.clone(), resolved_at, *block_timestamp))
+                })
             },
         ))
         .await;
@@ -240,25 +217,6 @@ mod tests {
             aws_sdk_s3::primitives::DateTime::from_secs_and_nanos(1_609_459_200, 500_000_000);
         let expected = DateTime::from_timestamp(1_609_459_200, 500_000_000).unwrap();
         assert_eq!(smithy_to_chrono(&smithy), Some(expected));
-    }
-
-    #[test]
-    fn filter_present_skips_unconfigured_chain_without_error() {
-        let client = S3Client {
-            chains: HashMap::new(),
-            semaphore: Arc::new(Semaphore::new(4)),
-        };
-
-        let candidates = vec![
-            ("handle-abc".to_string(), 999_i32, None),
-            ("handle-def".to_string(), 42_i32, None),
-        ];
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(client.filter_present(&candidates));
-
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
     }
 
     #[test]

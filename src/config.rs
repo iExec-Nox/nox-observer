@@ -186,6 +186,11 @@ fn validate_nats_urls(urls: &Vec<String>) -> Result<(), ValidationError> {
 /// derive on the `#[validate(nested)]` `HashMap` field emits a bound requiring
 /// `S3ChainConfig: Serialize`. Do not remove it without dropping nested
 /// validation. It is never actually serialized at runtime.
+///
+/// `max_concurrent_requests` default is 1000: S3 supports 5,500 GET/HEAD per
+/// partitioned prefix with no connection limit, so the cap is local-resource
+/// driven rather than S3-driven. See:
+/// https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance-guidelines.html
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct S3Config {
     #[validate(custom(function = "validate_s3_chains_non_empty"))]
@@ -195,7 +200,7 @@ pub struct S3Config {
     pub poll_interval_seconds: u64,
     #[validate(range(min = 1, max = 1000))]
     pub batch_size: u32,
-    #[validate(range(min = 1, max = 256))]
+    #[validate(range(min = 1, max = 5000))]
     pub max_concurrent_requests: usize,
 }
 
@@ -281,7 +286,7 @@ impl Config {
             .set_default("nats.max_batch", 10)?
             .set_default("s3.poll_interval_seconds", 10)?
             .set_default("s3.batch_size", 1000)?
-            .set_default("s3.max_concurrent_requests", 16)?
+            .set_default("s3.max_concurrent_requests", 1000)?
             .add_source(
                 Environment::with_prefix("NOX_OBSERVER")
                     .prefix_separator("_")
@@ -389,7 +394,7 @@ mod tests {
             assert_eq!(10, config.nats.max_batch);
             assert_eq!(10, config.s3.poll_interval_seconds);
             assert_eq!(1000, config.s3.batch_size);
-            assert_eq!(16, config.s3.max_concurrent_requests);
+            assert_eq!(1000, config.s3.max_concurrent_requests);
             assert_eq!(1, config.s3.chains.len());
         });
     }
@@ -516,7 +521,7 @@ mod tests {
             config.validate().expect("should validate");
             assert_eq!(10, config.s3.poll_interval_seconds);
             assert_eq!(1000, config.s3.batch_size);
-            assert_eq!(16, config.s3.max_concurrent_requests);
+            assert_eq!(1000, config.s3.max_concurrent_requests);
             let chain = config
                 .s3
                 .chains

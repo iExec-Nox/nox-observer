@@ -1,34 +1,18 @@
-use axum::{Json, http::StatusCode, response::IntoResponse};
-use serde_json::json;
 use thiserror::Error;
-use tracing::warn;
 
 // ==================================
-// HTTP layer error (Axum handlers)
+// NATS consumer error
 // ==================================
 
 #[derive(Error, Debug)]
-pub enum ObserverError {
-    #[error("NATS consumer error: {0}")]
-    Nats(String),
-
-    #[error("Subgraph poller error: {0}")]
-    SubgraphPoller(#[from] SubgraphPollerError),
+pub enum NatsError {
+    #[error("NATS connect error: {0}")]
+    Connect(String),
+    #[error("NATS stream error: {0}")]
+    Stream(String),
+    #[error("NATS message error: {0}")]
+    Message(String),
 }
-
-impl IntoResponse for ObserverError {
-    fn into_response(self) -> axum::response::Response {
-        warn!("Request failed: {}", self);
-        let status = match &self {
-            ObserverError::Nats(_) | ObserverError::SubgraphPoller(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-        };
-        (status, Json(json!({ "error": self.to_string() }))).into_response()
-    }
-}
-
-pub type ObserverResult<T> = Result<T, ObserverError>;
 
 // ==================================
 // Subgraph client error

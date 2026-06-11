@@ -10,7 +10,7 @@ use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 use crate::config::{NatsConfig, TlsConfig};
-use crate::errors::ObserverError;
+use crate::errors::NatsError;
 use crate::utils::normalize_pem;
 
 /// Connection state for NATS client
@@ -28,7 +28,7 @@ pub struct NatsClient {
 
 impl NatsClient {
     /// Connect to NATS server
-    pub async fn connect(config: &NatsConfig) -> Result<Self, ObserverError> {
+    pub async fn connect(config: &NatsConfig) -> Result<Self, NatsError> {
         let (state_tx, state_rx) = watch::channel(ConnectionState::Disconnected);
 
         let state_tx_clone = state_tx.clone();
@@ -70,7 +70,7 @@ impl NatsClient {
         );
 
         let client = options.connect(&config.urls[..]).await.map_err(|e| {
-            ObserverError::Nats(format!(
+            NatsError::Connect(format!(
                 "Failed to connect to NATS cluster {:?}: {}",
                 config.urls, e
             ))
@@ -98,10 +98,10 @@ impl NatsClient {
 }
 
 /// Build an in-memory rustls `ClientConfig` from PEM strings supplied via env vars.
-fn build_rustls_client_config(tls: &TlsConfig) -> Result<ClientConfig, ObserverError> {
+fn build_rustls_client_config(tls: &TlsConfig) -> Result<ClientConfig, NatsError> {
     for (label, value) in [("ca", &tls.ca), ("cert", &tls.cert), ("key", &tls.key)] {
         if value.trim().is_empty() {
-            return Err(ObserverError::Nats(format!(
+            return Err(NatsError::Connect(format!(
                 "TLS enabled but `{label}` PEM content is empty (set NOX_OBSERVER_NATS__TLS__{} env var)",
                 label.to_uppercase()
             )));
@@ -115,31 +115,31 @@ fn build_rustls_client_config(tls: &TlsConfig) -> Result<ClientConfig, ObserverE
     let mut roots = RootCertStore::empty();
     for cert_der in CertificateDer::pem_slice_iter(ca.as_bytes()) {
         let cert_der =
-            cert_der.map_err(|e| ObserverError::Nats(format!("Failed to parse CA PEM: {e}")))?;
-        roots.add(cert_der).map_err(|e| {
-            ObserverError::Nats(format!("Failed to add CA cert to root store: {e}"))
-        })?;
+            cert_der.map_err(|e| NatsError::Connect(format!("Failed to parse CA PEM: {e}")))?;
+        roots
+            .add(cert_der)
+            .map_err(|e| NatsError::Connect(format!("Failed to add CA cert to root store: {e}")))?;
     }
     if roots.is_empty() {
-        return Err(ObserverError::Nats(
+        return Err(NatsError::Connect(
             "No CA certificates found in PEM content".to_string(),
         ));
     }
 
     let cert_chain: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(cert.as_bytes())
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| ObserverError::Nats(format!("Failed to parse client cert PEM: {e}")))?;
+        .map_err(|e| NatsError::Connect(format!("Failed to parse client cert PEM: {e}")))?;
     if cert_chain.is_empty() {
-        return Err(ObserverError::Nats(
+        return Err(NatsError::Connect(
             "No client certificates found in PEM content".to_string(),
         ));
     }
 
     let private_key = PrivateKeyDer::from_pem_slice(key.as_bytes())
-        .map_err(|e| ObserverError::Nats(format!("Failed to parse client key PEM: {e}")))?;
+        .map_err(|e| NatsError::Connect(format!("Failed to parse client key PEM: {e}")))?;
 
     ClientConfig::builder()
         .with_root_certificates(roots)
         .with_client_auth_cert(cert_chain, private_key)
-        .map_err(|e| ObserverError::Nats(format!("Failed to build rustls client config: {e}")))
+        .map_err(|e| NatsError::Connect(format!("Failed to build rustls client config: {e}")))
 }
