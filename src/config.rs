@@ -92,13 +92,42 @@ fn validate_subgraph_chains(chains: &HashMap<String, String>) -> Result<(), Vali
     Ok(())
 }
 
-#[derive(Debug, Clone, Deserialize, Validate)]
+/// Database connection configuration, supplied as discrete components rather
+/// than a single DSN string. Each part is handed straight to the
+/// `PgConnectOptions` builder, so the password may contain any characters
+/// (provider-generated passwords routinely include `#`, `=`, `!`, and others
+/// that are reserved in a URL) without percent-encoding.
+///
+/// `Debug` is implemented manually to keep `password` out of log and panic
+/// output.
+#[derive(Clone, Deserialize, Validate)]
 pub struct DatabaseConfig {
-    #[validate(url)]
-    pub url: String,
+    #[validate(length(min = 1))]
+    pub host: String,
+    pub port: u16,
+    #[validate(length(min = 1))]
+    pub user: String,
+    #[validate(length(min = 1))]
+    pub password: String,
+    #[validate(length(min = 1))]
+    pub dbname: String,
     #[validate(range(min = 1, max = 100))]
     pub max_connections: u32,
     pub tls_enabled: bool,
+}
+
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DatabaseConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("password", &"<redacted>")
+            .field("dbname", &self.dbname)
+            .field("max_connections", &self.max_connections)
+            .field("tls_enabled", &self.tls_enabled)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -236,6 +265,8 @@ impl Config {
             .set_default("server.port", 9000)?
             .set_default("subgraph.poll_interval_seconds", 10)?
             .set_default("subgraph.batch_size", 1000)?
+            .set_default("database.host", "127.0.0.1")?
+            .set_default("database.port", 5432)?
             .set_default("database.max_connections", 5)?
             .set_default("database.tls_enabled", false)?
             .set_default("nats.urls", Vec::<String>::new())?
@@ -281,16 +312,18 @@ mod tests {
 
     // ── Shared test constants — required-env values repeated across tests ───
     const TEST_SUBGRAPH_URL: &str = "https://example.com/sg";
-    const TEST_DATABASE_URL: &str = "postgres://x:y@h/d";
 
     /// Subgraph + database env entries required by every load-then-validate test.
-    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 3] {
+    /// host/port use defaults; user/password/dbname are required components.
+    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 5] {
         [
             (
                 "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
                 Some(TEST_SUBGRAPH_URL),
             ),
-            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_DATABASE__USER", Some("nox_user")),
+            ("NOX_OBSERVER_DATABASE__PASSWORD", Some("nox_password")),
+            ("NOX_OBSERVER_DATABASE__DBNAME", Some("nox_observer")),
             ("NOX_OBSERVER_DATABASE__TLS_ENABLED", Some("false")),
         ]
     }
@@ -459,7 +492,9 @@ mod tests {
         temp_env::with_vars(
             [
                 ("NOX_OBSERVER_SUBGRAPH__CHAINS__421614", None::<&str>),
-                ("NOX_OBSERVER_DATABASE__URL", None::<&str>),
+                ("NOX_OBSERVER_DATABASE__USER", None::<&str>),
+                ("NOX_OBSERVER_DATABASE__PASSWORD", None::<&str>),
+                ("NOX_OBSERVER_DATABASE__DBNAME", None::<&str>),
             ],
             || {
                 let result = Config::load();
@@ -528,7 +563,9 @@ mod tests {
     #[test]
     fn s3_parses_two_map_entries_when_two_chains_configured() {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
-            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_DATABASE__USER", Some("nox_user")),
+            ("NOX_OBSERVER_DATABASE__PASSWORD", Some("nox_password")),
+            ("NOX_OBSERVER_DATABASE__DBNAME", Some("nox_observer")),
             ("NOX_OBSERVER_DATABASE__TLS_ENABLED", Some("false")),
             ("NOX_OBSERVER_SUBGRAPH__CHAINS__1", Some(TEST_SUBGRAPH_URL)),
             ("NOX_OBSERVER_SUBGRAPH__CHAINS__2", Some(TEST_SUBGRAPH_URL)),
@@ -562,7 +599,9 @@ mod tests {
     #[test]
     fn subgraph_parses_two_map_entries_when_two_chains_configured() {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
-            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_DATABASE__USER", Some("nox_user")),
+            ("NOX_OBSERVER_DATABASE__PASSWORD", Some("nox_password")),
+            ("NOX_OBSERVER_DATABASE__DBNAME", Some("nox_observer")),
             ("NOX_OBSERVER_DATABASE__TLS_ENABLED", Some("false")),
             (
                 "NOX_OBSERVER_SUBGRAPH__CHAINS__1",
@@ -650,7 +689,9 @@ mod tests {
                 "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
                 Some(TEST_SUBGRAPH_URL),
             ),
-            ("NOX_OBSERVER_DATABASE__URL", Some(TEST_DATABASE_URL)),
+            ("NOX_OBSERVER_DATABASE__USER", Some("nox_user")),
+            ("NOX_OBSERVER_DATABASE__PASSWORD", Some("nox_password")),
+            ("NOX_OBSERVER_DATABASE__DBNAME", Some("nox_observer")),
         ];
         vars.extend(nats_required_env());
         vars.extend(s3_required_env());
@@ -663,6 +704,89 @@ mod tests {
             config
                 .validate()
                 .expect("plaintext default needs no extra configuration");
+        });
+    }
+
+    fn database_config_with_password(password: &str) -> DatabaseConfig {
+        DatabaseConfig {
+            host: "db.example.com".to_string(),
+            port: 5432,
+            user: "app_user".to_string(),
+            password: password.to_string(),
+            dbname: "mydb".to_string(),
+            max_connections: 5,
+            tls_enabled: false,
+        }
+    }
+
+    #[test]
+    fn database_validate_returns_ok_for_password_with_reserved_chars() {
+        database_config_with_password("aB1!E}Oe#QP0t=cL")
+            .validate()
+            .expect("password with reserved characters must be accepted");
+    }
+
+    #[test]
+    fn database_validate_returns_err_when_user_empty() {
+        let mut cfg = database_config_with_password("pw");
+        cfg.user = String::new();
+        assert!(cfg.validate().is_err(), "empty user must be rejected");
+    }
+
+    #[test]
+    fn database_validate_returns_err_when_password_empty() {
+        let cfg = database_config_with_password("");
+        assert!(cfg.validate().is_err(), "empty password must be rejected");
+    }
+
+    #[test]
+    fn database_validate_returns_err_when_dbname_empty() {
+        let mut cfg = database_config_with_password("pw");
+        cfg.dbname = String::new();
+        assert!(cfg.validate().is_err(), "empty dbname must be rejected");
+    }
+
+    #[test]
+    fn database_debug_redacts_password() {
+        let rendered = format!("{:?}", database_config_with_password("super-secret-#pw"));
+        assert!(
+            !rendered.contains("super-secret-#pw"),
+            "Debug output must not contain the password"
+        );
+        assert!(
+            rendered.contains("<redacted>"),
+            "Debug output must mark the password as redacted"
+        );
+    }
+
+    #[test]
+    fn database_load_parses_components_from_env() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
+        vars.push(("NOX_OBSERVER_DATABASE__HOST", Some("db.internal")));
+        vars.push(("NOX_OBSERVER_DATABASE__PORT", Some("6432")));
+        vars.push(("NOX_OBSERVER_DATABASE__PASSWORD", Some("aB1!E}Oe#QP0t=cL")));
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            config.validate().expect("should validate");
+            assert_eq!("db.internal", config.database.host);
+            assert_eq!(6432, config.database.port);
+            assert_eq!("nox_user", config.database.user);
+            assert_eq!("aB1!E}Oe#QP0t=cL", config.database.password);
+            assert_eq!("nox_observer", config.database.dbname);
+        });
+    }
+
+    #[test]
+    fn database_load_defaults_host_and_port() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            assert_eq!("127.0.0.1", config.database.host);
+            assert_eq!(5432, config.database.port);
         });
     }
 
