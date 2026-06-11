@@ -114,11 +114,10 @@ fn build_rustls_client_config(tls: &TlsConfig) -> Result<ClientConfig, NatsError
 
     let mut roots = RootCertStore::empty();
     for cert_der in CertificateDer::pem_slice_iter(ca.as_bytes()) {
-        let cert_der =
-            cert_der.map_err(|e| NatsError(format!("Failed to parse CA PEM: {e}")))?;
-        roots.add(cert_der).map_err(|e| {
-            NatsError(format!("Failed to add CA cert to root store: {e}"))
-        })?;
+        let cert_der = cert_der.map_err(|e| NatsError(format!("Failed to parse CA PEM: {e}")))?;
+        roots
+            .add(cert_der)
+            .map_err(|e| NatsError(format!("Failed to add CA cert to root store: {e}")))?;
     }
     if roots.is_empty() {
         return Err(NatsError(
