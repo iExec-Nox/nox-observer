@@ -63,33 +63,47 @@ pub struct ServerConfig {
 /// `chain_id` column), every URL is well-formed.
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct SubgraphConfig {
-    #[validate(custom(function = "validate_subgraph_chains"))]
-    pub chains: HashMap<String, String>,
+    #[validate(nested, custom(function = "validate_subgraph_chains"))]
+    pub chains: HashMap<String, SubgraphChainConfig>,
     #[validate(range(min = 1, max = 3600))]
     pub poll_interval_seconds: u64,
     #[validate(range(min = 1, max = 1000))]
     pub batch_size: u32,
 }
 
-fn validate_subgraph_chains(chains: &HashMap<String, String>) -> Result<(), ValidationError> {
+fn validate_subgraph_chains(
+    chains: &HashMap<String, SubgraphChainConfig>,
+) -> Result<(), ValidationError> {
     if chains.is_empty() {
         return Err(ValidationError::new(
             "subgraph.chains must contain at least one chain",
         ));
     }
-    for (chain_id, url) in chains {
+    for (chain_id, subgraph_chain_config) in chains {
         if chain_id.parse::<i32>().is_err() {
             return Err(ValidationError::new("invalid_chain_id").with_message(
                 format!("subgraph.chains key '{chain_id}' must be a valid i32").into(),
             ));
         }
-        if reqwest::Url::parse(url).is_err() {
+        if reqwest::Url::parse(&subgraph_chain_config.url).is_err() {
             return Err(ValidationError::new("invalid_chain_url").with_message(
-                format!("subgraph.chains[{chain_id}] is not a valid URL: {url}").into(),
+                format!(
+                    "subgraph.chains[{chain_id}] is not a valid URL: {}",
+                    subgraph_chain_config.url
+                )
+                .into(),
             ));
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct SubgraphChainConfig {
+    #[validate(length(min = 1))]
+    pub url: String,
+    #[validate(range(min = 1))]
+    pub start_block: u64,
 }
 
 /// Database connection configuration, supplied as discrete components rather
@@ -320,11 +334,15 @@ mod tests {
 
     /// Subgraph + database env entries required by every load-then-validate test.
     /// host/port use defaults; user/password/dbname are required components.
-    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 5] {
+    fn required_non_nats_env() -> [(&'static str, Option<&'static str>); 6] {
         [
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL",
                 Some(TEST_SUBGRAPH_URL),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__START_BLOCK",
+                Some("250991603"),
             ),
             ("NOX_OBSERVER_DATABASE__USER", Some("nox_user")),
             ("NOX_OBSERVER_DATABASE__PASSWORD", Some("nox_password")),
@@ -380,10 +398,13 @@ mod tests {
             assert_eq!(10, config.subgraph.poll_interval_seconds);
             assert_eq!(1000, config.subgraph.batch_size);
             assert_eq!(1, config.subgraph.chains.len());
-            assert_eq!(
-                TEST_SUBGRAPH_URL,
-                config.subgraph.chains.get("421614").unwrap().as_str()
-            );
+            let chain = config
+                .subgraph
+                .chains
+                .get("421614")
+                .expect("chain 421614 present");
+            assert_eq!(TEST_SUBGRAPH_URL, chain.url);
+            assert_eq!(250991603, chain.start_block);
             assert_eq!(5, config.database.max_connections);
             assert_eq!(2, config.nats.urls.len());
             assert!(config.nats.tls.enabled);
@@ -496,7 +517,11 @@ mod tests {
     fn load_returns_err_when_required_env_vars_missing() {
         temp_env::with_vars(
             [
-                ("NOX_OBSERVER_SUBGRAPH__CHAINS__421614", None::<&str>),
+                ("NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL", None::<&str>),
+                (
+                    "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__START_BLOCK",
+                    None::<&str>,
+                ),
                 ("NOX_OBSERVER_DATABASE__USER", None::<&str>),
                 ("NOX_OBSERVER_DATABASE__PASSWORD", None::<&str>),
                 ("NOX_OBSERVER_DATABASE__DBNAME", None::<&str>),
@@ -572,8 +597,22 @@ mod tests {
             ("NOX_OBSERVER_DATABASE__PASSWORD", Some("nox_password")),
             ("NOX_OBSERVER_DATABASE__DBNAME", Some("nox_observer")),
             ("NOX_OBSERVER_DATABASE__TLS_ENABLED", Some("false")),
-            ("NOX_OBSERVER_SUBGRAPH__CHAINS__1", Some(TEST_SUBGRAPH_URL)),
-            ("NOX_OBSERVER_SUBGRAPH__CHAINS__2", Some(TEST_SUBGRAPH_URL)),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__1__URL",
+                Some(TEST_SUBGRAPH_URL),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__1__START_BLOCK",
+                Some("1000"),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__2__URL",
+                Some(TEST_SUBGRAPH_URL),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__2__START_BLOCK",
+                Some("2000"),
+            ),
         ];
         vars.extend(nats_required_env());
         vars.extend([
@@ -609,12 +648,20 @@ mod tests {
             ("NOX_OBSERVER_DATABASE__DBNAME", Some("nox_observer")),
             ("NOX_OBSERVER_DATABASE__TLS_ENABLED", Some("false")),
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAINS__1",
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__1__URL",
                 Some("https://example.com/sg-mainnet"),
             ),
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__1__START_BLOCK",
+                Some("1000"),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL",
                 Some("https://example.com/sg-arbitrum-sepolia"),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__START_BLOCK",
+                Some("250991603"),
             ),
             ("NOX_OBSERVER_S3__CHAINS__1__BUCKET", Some("bucket-chain-1")),
             ("NOX_OBSERVER_S3__CHAINS__1__ACCESS_KEY", Some("ak1")),
@@ -627,14 +674,20 @@ mod tests {
             let config = Config::load().expect("should load");
             config.validate().expect("should validate");
             assert_eq!(2, config.subgraph.chains.len());
-            assert_eq!(
-                "https://example.com/sg-mainnet",
-                config.subgraph.chains.get("1").unwrap().as_str()
-            );
-            assert_eq!(
-                "https://example.com/sg-arbitrum-sepolia",
-                config.subgraph.chains.get("421614").unwrap().as_str()
-            );
+            let chain_1 = config
+                .subgraph
+                .chains
+                .get("1")
+                .expect("chain 1 present");
+            assert_eq!("https://example.com/sg-mainnet", chain_1.url);
+            assert_eq!(1000, chain_1.start_block);
+            let chain_arb = config
+                .subgraph
+                .chains
+                .get("421614")
+                .expect("chain 421614 present");
+            assert_eq!("https://example.com/sg-arbitrum-sepolia", chain_arb.url);
+            assert_eq!(250991603, chain_arb.start_block);
         });
     }
 
@@ -691,8 +744,12 @@ mod tests {
         // list manually here to leave the var unset and exercise the default.
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
             (
-                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614",
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__URL",
                 Some(TEST_SUBGRAPH_URL),
+            ),
+            (
+                "NOX_OBSERVER_SUBGRAPH__CHAINS__421614__START_BLOCK",
+                Some("250991603"),
             ),
             ("NOX_OBSERVER_DATABASE__USER", Some("nox_user")),
             ("NOX_OBSERVER_DATABASE__PASSWORD", Some("nox_password")),

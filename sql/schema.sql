@@ -69,9 +69,9 @@ CREATE INDEX idx_handle_parents_parent ON handle_parents (parent_handle_id);
 -- multichain deployments resume independently after a restart.
 CREATE TABLE subgraph_poller_state (
     chain_id   INT         PRIMARY KEY,
-    skip       BIGINT      NOT NULL,
+    last_processed_block BIGINT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chain_id_positive CHECK (chain_id > 0),
-    CONSTRAINT skip_non_negative CHECK (skip >= 0)
+    CONSTRAINT last_processed_block_non_negative CHECK (last_processed_block >= 0)
 );

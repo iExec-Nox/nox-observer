@@ -1,8 +1,8 @@
-query HandlesQuery($first: Int!, $skip: Int!) {
+query HandlesQuery($first: Int!, $cursorBlock: BigInt!) {
   handles(
     first: $first
-    skip: $skip
-    orderBy: blockTimestamp
+    where: { blockNumber_gte: $cursorBlock }
+    orderBy: blockNumber
     orderDirection: asc
   ) {
     id

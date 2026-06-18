@@ -17,7 +17,7 @@ pub struct SubgraphPoller {
     chain_id: i32,
     poll_interval: Duration,
     batch_size: i64,
-    skip: i64,
+    cursor_block: i64,
 }
 
 impl SubgraphPoller {
@@ -27,27 +27,28 @@ impl SubgraphPoller {
         chain_id: i32,
         poll_interval: Duration,
         batch_size: i64,
+        start_block: i64,
     ) -> Result<Self, sqlx::Error> {
-        let skip = db.load_skip(chain_id).await?;
+        let cursor_block = db.load_last_block(chain_id).await?.unwrap_or(start_block);
         Ok(Self {
             subgraph,
             db,
             chain_id,
             poll_interval,
             batch_size,
-            skip,
+            cursor_block,
         })
     }
 
     pub async fn run(mut self) -> Result<(), SubgraphPollerError> {
         info!(
             chain_id = self.chain_id,
-            "poller starting; resuming from skip={}", self.skip
+            "poller starting; resuming from block={}", self.cursor_block
         );
         self.catch_up().await?;
         info!(
             chain_id = self.chain_id,
-            "caught up at skip={}; entering live mode", self.skip
+            "caught up at block={}; entering live mode", self.cursor_block
         );
 
         let mut ticker = interval(self.poll_interval);
@@ -104,7 +105,7 @@ impl SubgraphPoller {
     async fn fetch_and_process_page(&mut self) -> Result<usize, SubgraphPollerError> {
         let data = self
             .subgraph
-            .fetch_handles(self.skip, self.batch_size)
+            .fetch_handles(self.cursor_block, self.batch_size)
             .await?;
         let n = data.handles.len();
         if n == 0 {
@@ -134,13 +135,20 @@ impl SubgraphPoller {
                 self.db.upsert_handle_parent(&h.id, &p.id).await?;
             }
 
-            self.skip += 1;
-            self.db.save_skip(self.chain_id, self.skip).await?;
+            // Handles arrive ordered by blockNumber asc, so the last one we see
+            // in the page is the highest block; advance the cursor to it.
+            if let Some(bn) = block_number {
+                self.cursor_block = bn;
+            }
         }
+
+        self.db
+            .save_last_block(self.chain_id, self.cursor_block)
+            .await?;
 
         info!(
             chain_id = self.chain_id,
-            "polled {n} handles (skip={})", self.skip
+            "polled {n} handles (block={})", self.cursor_block
         );
         Ok(n)
     }
