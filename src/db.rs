@@ -82,7 +82,8 @@ impl Db {
         Ok(())
     }
 
-    /// Returns the persisted subgraph poller skip for `chain_id`, or 0 if absent.
+    /// Returns the last processed block persisted for `chain_id`'s subgraph
+    /// poller, or `None` if no cursor has been saved yet.
     pub async fn load_last_block(&self, chain_id: i32) -> Result<Option<i64>, sqlx::Error> {
         let row: Option<(i64,)> = sqlx::query_as(
             "SELECT last_processed_block FROM subgraph_poller_state WHERE chain_id = $1",
