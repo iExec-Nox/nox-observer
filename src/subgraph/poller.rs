@@ -105,6 +105,15 @@ impl SubgraphPoller {
         }
     }
 
+    /// Fetch the next page from the subgraph cursor, upsert its handles, and
+    /// advance the cursor.
+    ///
+    /// Handles arrive ordered by `(blockNumber asc, id asc)`, so the last one in
+    /// the page is the greatest `(block, id)`. Advancing the composite cursor to
+    /// it makes the next fetch resume strictly after this handle, which
+    /// guarantees forward progress even when a single block holds more than
+    /// `batch_size` handles (a block-only cursor would re-fetch that block
+    /// forever). Only `cursor_block` is persisted.
     async fn fetch_and_process_page(&mut self) -> Result<usize, SubgraphPollerError> {
         let data = self
             .subgraph
@@ -139,12 +148,6 @@ impl SubgraphPoller {
             }
         }
 
-        // Handles arrive ordered by (blockNumber asc, id asc), so the last one
-        // in the page is the greatest (block, id). Advancing the composite
-        // cursor to it makes the next fetch resume strictly after this handle,
-        // which guarantees forward progress even when a single block holds more
-        // than `batch_size` handles (a block-only cursor would re-fetch that
-        // block forever). Only `cursor_block` is persisted.
         if let Some(last) = data.handles.last()
             && let Some(bn) = last.block_number.as_deref().map(parse_block_number)
         {
