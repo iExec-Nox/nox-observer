@@ -30,11 +30,13 @@ impl SubgraphClient {
     pub async fn fetch_handles(
         &self,
         cursor_block: i64,
+        cursor_id: &str,
         first: i64,
     ) -> SubgraphResult<handles_query::ResponseData> {
         let variables = handles_query::Variables {
             first,
             cursor_block: cursor_block.to_string(),
+            cursor_id: cursor_id.to_string(),
         };
         let response = post_graphql::<HandlesQuery, _>(&self.http, &self.url, variables).await?;
 

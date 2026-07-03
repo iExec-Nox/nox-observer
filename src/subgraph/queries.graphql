@@ -1,7 +1,12 @@
-query HandlesQuery($first: Int!, $cursorBlock: BigInt!) {
+query HandlesQuery($first: Int!, $cursorBlock: BigInt!, $cursorId: Bytes!) {
   handles(
     first: $first
-    where: { blockNumber_gte: $cursorBlock }
+    where: {
+      or: [
+        { blockNumber_gt: $cursorBlock }
+        { blockNumber: $cursorBlock, id_gt: $cursorId }
+      ]
+    }
     orderBy: blockNumber
     orderDirection: asc
   ) {

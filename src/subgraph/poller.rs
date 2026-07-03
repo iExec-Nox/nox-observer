@@ -10,6 +10,7 @@ use crate::errors::SubgraphPollerError;
 
 const MAX_CONSECUTIVE_RETRIES: u32 = 5;
 const MAX_BACKOFF_EXPONENT: u32 = 5; // 2^5 = 32s cap per attempt
+const CURSOR_ID_START: &str = "0x";
 
 pub struct SubgraphPoller {
     subgraph: SubgraphClient,
@@ -18,6 +19,7 @@ pub struct SubgraphPoller {
     poll_interval: Duration,
     batch_size: i64,
     cursor_block: i64,
+    cursor_id: String,
 }
 
 impl SubgraphPoller {
@@ -37,6 +39,7 @@ impl SubgraphPoller {
             poll_interval,
             batch_size,
             cursor_block,
+            cursor_id: CURSOR_ID_START.to_string(),
         })
     }
 
@@ -105,7 +108,7 @@ impl SubgraphPoller {
     async fn fetch_and_process_page(&mut self) -> Result<usize, SubgraphPollerError> {
         let data = self
             .subgraph
-            .fetch_handles(self.cursor_block, self.batch_size)
+            .fetch_handles(self.cursor_block, &self.cursor_id, self.batch_size)
             .await?;
         let n = data.handles.len();
         if n == 0 {
@@ -134,12 +137,19 @@ impl SubgraphPoller {
             for p in &h.parent_handles {
                 self.db.upsert_handle_parent(&h.id, &p.id).await?;
             }
+        }
 
-            // Handles arrive ordered by blockNumber asc, so the last one we see
-            // in the page is the highest block; advance the cursor to it.
-            if let Some(bn) = block_number {
-                self.cursor_block = bn;
-            }
+        // Handles arrive ordered by (blockNumber asc, id asc), so the last one
+        // in the page is the greatest (block, id). Advancing the composite
+        // cursor to it makes the next fetch resume strictly after this handle,
+        // which guarantees forward progress even when a single block holds more
+        // than `batch_size` handles (a block-only cursor would re-fetch that
+        // block forever). Only `cursor_block` is persisted.
+        if let Some(last) = data.handles.last()
+            && let Some(bn) = last.block_number.as_deref().map(parse_block_number)
+        {
+            self.cursor_block = bn;
+            self.cursor_id = last.id.clone();
         }
 
         self.db
@@ -148,7 +158,7 @@ impl SubgraphPoller {
 
         info!(
             chain_id = self.chain_id,
-            "polled {n} handles (block={})", self.cursor_block
+            "polled {n} handles (block={}, id={})", self.cursor_block, self.cursor_id
         );
         Ok(n)
     }

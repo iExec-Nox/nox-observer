@@ -674,11 +674,7 @@ mod tests {
             let config = Config::load().expect("should load");
             config.validate().expect("should validate");
             assert_eq!(2, config.subgraph.chains.len());
-            let chain_1 = config
-                .subgraph
-                .chains
-                .get("1")
-                .expect("chain 1 present");
+            let chain_1 = config.subgraph.chains.get("1").expect("chain 1 present");
             assert_eq!("https://example.com/sg-mainnet", chain_1.url);
             assert_eq!(1000, chain_1.start_block);
             let chain_arb = config
