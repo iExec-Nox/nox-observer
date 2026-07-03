@@ -58,9 +58,11 @@ pub struct ServerConfig {
 /// Subgraph poller configuration.
 ///
 /// `chains` maps chain IDs (as strings, because `config` deserializes map keys
-/// as strings) to per-chain subgraph endpoint URLs. The custom validator below
-/// enforces: at least one chain, every key parses as `i32` (matches the `INT`
-/// `chain_id` column), every URL is well-formed.
+/// as strings) to their per-chain [`SubgraphChainConfig`] (subgraph endpoint URL
+/// plus the block to start indexing from). The custom validator below enforces:
+/// at least one chain, every key parses as `i32` (matches the `INT` `chain_id`
+/// column), and every URL is well-formed; `nested` also runs each
+/// `SubgraphChainConfig`'s own field validation.
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct SubgraphConfig {
     #[validate(nested, custom(function = "validate_subgraph_chains"))]
@@ -103,7 +105,7 @@ pub struct SubgraphChainConfig {
     #[validate(length(min = 1))]
     pub url: String,
     #[validate(range(min = 1))]
-    pub start_block: u64,
+    pub start_block: i64,
 }
 
 /// Database connection configuration, supplied as discrete components rather

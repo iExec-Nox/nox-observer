@@ -66,7 +66,7 @@ impl Application {
                 chain_id,
                 poll_interval,
                 batch_size,
-                subgraph_chain_config.start_block as i64,
+                subgraph_chain_config.start_block,
             )
             .await
             .with_context(|| {
