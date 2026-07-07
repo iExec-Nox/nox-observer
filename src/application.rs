@@ -52,20 +52,26 @@ impl Application {
         let poll_interval = Duration::from_secs(config.subgraph.poll_interval_seconds);
         let batch_size = i64::from(config.subgraph.batch_size);
         let mut subgraph_pollers = Vec::with_capacity(config.subgraph.chains.len());
-        for (chain_id_str, url) in &config.subgraph.chains {
+        for (chain_id_str, subgraph_chain_config) in &config.subgraph.chains {
             // `validate_subgraph_chains` already enforced this parses as i32, so
             // an unwrap-like context is enough; if it ever fires it's a code bug.
             let chain_id: i32 = chain_id_str.parse().with_context(|| {
                 format!("invalid chain_id key '{chain_id_str}' in subgraph.chains (expected i32)")
             })?;
-            let subgraph = SubgraphClient::new(url.clone())
+            let subgraph = SubgraphClient::new(subgraph_chain_config.url.clone())
                 .with_context(|| format!("Failed to build subgraph client for chain {chain_id}"))?;
-            let poller =
-                SubgraphPoller::new(subgraph, db.clone(), chain_id, poll_interval, batch_size)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to initialize subgraph poller for chain {chain_id}")
-                    })?;
+            let poller = SubgraphPoller::new(
+                subgraph,
+                db.clone(),
+                chain_id,
+                poll_interval,
+                batch_size,
+                subgraph_chain_config.start_block,
+            )
+            .await
+            .with_context(|| {
+                format!("Failed to initialize subgraph poller for chain {chain_id}")
+            })?;
             subgraph_pollers.push((chain_id, poller));
         }
 

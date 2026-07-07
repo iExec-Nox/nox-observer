@@ -82,24 +82,29 @@ impl Db {
         Ok(())
     }
 
-    /// Returns the persisted subgraph poller skip for `chain_id`, or 0 if absent.
-    pub async fn load_skip(&self, chain_id: i32) -> Result<i64, sqlx::Error> {
+    /// Returns the cursor block persisted for `chain_id`'s subgraph poller, or
+    /// `None` if no cursor has been saved yet.
+    pub async fn load_cursor_block(&self, chain_id: i32) -> Result<Option<i64>, sqlx::Error> {
         let row: Option<(i64,)> =
-            sqlx::query_as("SELECT skip FROM subgraph_poller_state WHERE chain_id = $1")
+            sqlx::query_as("SELECT cursor_block FROM subgraph_poller_state WHERE chain_id = $1")
                 .bind(chain_id)
                 .fetch_optional(&self.pool)
                 .await?;
-        Ok(row.map(|(s,)| s).unwrap_or(0))
+        Ok(row.map(|(s,)| s))
     }
 
-    pub async fn save_skip(&self, chain_id: i32, skip: i64) -> Result<(), sqlx::Error> {
+    pub async fn save_cursor_block(
+        &self,
+        chain_id: i32,
+        cursor_block: i64,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO subgraph_poller_state (chain_id, skip) VALUES ($1, $2)
+            "INSERT INTO subgraph_poller_state (chain_id, cursor_block) VALUES ($1, $2)
              ON CONFLICT (chain_id) DO UPDATE
-                SET skip = EXCLUDED.skip, updated_at = now()",
+                SET cursor_block = EXCLUDED.cursor_block, updated_at = now()",
         )
         .bind(chain_id)
-        .bind(skip)
+        .bind(cursor_block)
         .execute(&self.pool)
         .await?;
         Ok(())

@@ -1,8 +1,18 @@
-query HandlesQuery($first: Int!, $skip: Int!) {
+query HandlesQuery($first: Int!, $cursorBlock: BigInt!, $cursorId: Bytes!) {
   handles(
     first: $first
-    skip: $skip
-    orderBy: blockTimestamp
+    where: {
+      or: [
+        { blockNumber_gt: $cursorBlock }
+        { blockNumber: $cursorBlock, id_gt: $cursorId }
+      ]
+    }
+    # graph-node appends `id asc` as an implicit secondary sort, so the total
+    # order is (blockNumber asc, id asc). The composite (blockNumber, id) cursor
+    # in the `where` above relies on that tiebreaker to paginate deterministically
+    # within a single block; without it, ties would order arbitrarily and the
+    # cursor could skip or re-fetch handles.
+    orderBy: blockNumber
     orderDirection: asc
   ) {
     id
