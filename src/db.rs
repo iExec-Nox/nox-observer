@@ -82,30 +82,29 @@ impl Db {
         Ok(())
     }
 
-    /// Returns the last processed block persisted for `chain_id`'s subgraph
-    /// poller, or `None` if no cursor has been saved yet.
-    pub async fn load_last_block(&self, chain_id: i32) -> Result<Option<i64>, sqlx::Error> {
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT last_processed_block FROM subgraph_poller_state WHERE chain_id = $1",
-        )
-        .bind(chain_id)
-        .fetch_optional(&self.pool)
-        .await?;
+    /// Returns the cursor block persisted for `chain_id`'s subgraph poller, or
+    /// `None` if no cursor has been saved yet.
+    pub async fn load_cursor_block(&self, chain_id: i32) -> Result<Option<i64>, sqlx::Error> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT cursor_block FROM subgraph_poller_state WHERE chain_id = $1")
+                .bind(chain_id)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(s,)| s))
     }
 
-    pub async fn save_last_block(
+    pub async fn save_cursor_block(
         &self,
         chain_id: i32,
-        last_processed_block: i64,
+        cursor_block: i64,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO subgraph_poller_state (chain_id, last_processed_block) VALUES ($1, $2)
+            "INSERT INTO subgraph_poller_state (chain_id, cursor_block) VALUES ($1, $2)
              ON CONFLICT (chain_id) DO UPDATE
-                SET last_processed_block = EXCLUDED.last_processed_block, updated_at = now()",
+                SET cursor_block = EXCLUDED.cursor_block, updated_at = now()",
         )
         .bind(chain_id)
-        .bind(last_processed_block)
+        .bind(cursor_block)
         .execute(&self.pool)
         .await?;
         Ok(())

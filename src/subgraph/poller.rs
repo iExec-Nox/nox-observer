@@ -12,14 +12,21 @@ const MAX_CONSECUTIVE_RETRIES: u32 = 5;
 const MAX_BACKOFF_EXPONENT: u32 = 5; // 2^5 = 32s cap per attempt
 const CURSOR_ID_START: &str = "0x";
 
+/// Composite pagination cursor over the subgraph's `(blockNumber, id)` ordering.
+/// Only `block` is persisted; `id` is in-memory and resets to `CURSOR_ID_START`
+/// on restart, which harmlessly re-scans the resume block (upserts are idempotent).
+struct Cursor {
+    block: i64,
+    id: String,
+}
+
 pub struct SubgraphPoller {
     subgraph: SubgraphClient,
     db: Db,
     chain_id: i32,
     poll_interval: Duration,
     batch_size: i64,
-    cursor_block: i64,
-    cursor_id: String,
+    cursor: Cursor,
 }
 
 impl SubgraphPoller {
@@ -31,27 +38,29 @@ impl SubgraphPoller {
         batch_size: i64,
         start_block: i64,
     ) -> Result<Self, sqlx::Error> {
-        let cursor_block = db.load_last_block(chain_id).await?.unwrap_or(start_block);
+        let cursor_block = db.load_cursor_block(chain_id).await?.unwrap_or(start_block);
         Ok(Self {
             subgraph,
             db,
             chain_id,
             poll_interval,
             batch_size,
-            cursor_block,
-            cursor_id: CURSOR_ID_START.to_string(),
+            cursor: Cursor {
+                block: cursor_block,
+                id: CURSOR_ID_START.to_string(),
+            },
         })
     }
 
     pub async fn run(mut self) -> Result<(), SubgraphPollerError> {
         info!(
             chain_id = self.chain_id,
-            "poller starting; resuming from block={}", self.cursor_block
+            "poller starting; resuming from block={}", self.cursor.block
         );
         self.catch_up().await?;
         info!(
             chain_id = self.chain_id,
-            "caught up at block={}; entering live mode", self.cursor_block
+            "caught up at block={}; entering live mode", self.cursor.block
         );
 
         let mut ticker = interval(self.poll_interval);
@@ -113,11 +122,11 @@ impl SubgraphPoller {
     /// it makes the next fetch resume strictly after this handle, which
     /// guarantees forward progress even when a single block holds more than
     /// `batch_size` handles (a block-only cursor would re-fetch that block
-    /// forever). Only `cursor_block` is persisted.
+    /// forever). Only the cursor's block is persisted.
     async fn fetch_and_process_page(&mut self) -> Result<usize, SubgraphPollerError> {
         let data = self
             .subgraph
-            .fetch_handles(self.cursor_block, &self.cursor_id, self.batch_size)
+            .fetch_handles(self.cursor.block, &self.cursor.id, self.batch_size)
             .await?;
         let n = data.handles.len();
         if n == 0 {
@@ -151,17 +160,17 @@ impl SubgraphPoller {
         if let Some(last) = data.handles.last()
             && let Some(bn) = last.block_number.as_deref().map(parse_block_number)
         {
-            self.cursor_block = bn;
-            self.cursor_id = last.id.clone();
+            self.cursor.block = bn;
+            self.cursor.id = last.id.clone();
         }
 
         self.db
-            .save_last_block(self.chain_id, self.cursor_block)
+            .save_cursor_block(self.chain_id, self.cursor.block)
             .await?;
 
         info!(
             chain_id = self.chain_id,
-            "polled {n} handles (block={}, id={})", self.cursor_block, self.cursor_id
+            "polled {n} handles (block={}, id={})", self.cursor.block, self.cursor.id
         );
         Ok(n)
     }
