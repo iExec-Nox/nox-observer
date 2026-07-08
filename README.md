@@ -37,7 +37,7 @@ docker compose build
 
 ### Run
 
-The service requires Postgres, NATS, and an S3-compatible store. Start them first, then run the service either natively or in Docker.
+The service requires Postgres, NATS, and an S3-compatible store. Start Postgres first, then run the service either natively or in Docker.
 
 **1. Setup the env file**
 
@@ -45,12 +45,12 @@ The service requires Postgres, NATS, and an S3-compatible store. Start them firs
 cp .env.example .env
 ```
 
-Fill in the required credentials.
+Fill in the required credentials for remote service (NATS, S3).
 
 **2. Run dependecy services**
 
 ```bash
-docker compose up -d postgres pgadmin s3 s3-init
+docker compose up -d postgres pgadmin
 ```
 
 `sql/schema.sql` is loaded automatically the first time the Postgres volume is created.
@@ -62,7 +62,6 @@ The `.env` defaults use docker-compose service names as hosts. For native `cargo
 ```bash
 set -a && source .env && set +a && \
     NOX_OBSERVER_DATABASE__HOST=localhost \
-    NOX_OBSERVER_S3__CHAINS__421614__ENDPOINT_URL=http://localhost:9100 \
     cargo run
 ```
 
@@ -83,8 +82,6 @@ All services reachable from the host (all bound to `127.0.0.1`):
 | nox-observer `/metrics` | <http://localhost:9000/metrics> | Prometheus metrics                           |
 | pgAdmin                 | <http://localhost:5050>         | DB server config is auto-loaded              |
 | Postgres                | `localhost:5432`                | `psql "$DATABASE_URL"`                       |
-| MinIO (S3 API)          | <http://localhost:9100>         | endpoint used by the S3 resolver             |
-| MinIO console           | <http://localhost:9101>         | login `minioadmin` / `minioadmin`            |
 
 ### Connect to Postgres
 
