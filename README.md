@@ -4,6 +4,10 @@ Rust service that observes Nox protocol flows and materializes handle state in P
 
 ## Local development
 
+### Prerequisites
+
+- Docker and Docker Compose
+
 ### Build
 
 #### Native
