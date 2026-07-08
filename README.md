@@ -48,6 +48,7 @@ Fill in the required credentials.
 ```bash
 docker compose up -d postgres pgadmin s3 s3-init
 ```
+
 `sql/schema.sql` is loaded automatically the first time the Postgres volume is created.
 
 **3a. Run natively**
@@ -69,22 +70,17 @@ docker compose up -d nox-observer
 
 **4. Check the app is running**
 
-```bash
-curl http://localhost:9000/         # → {"service":"nox-observer","timestamp":...}
-curl http://localhost:9000/health   # → {"status":"ok"}
-curl http://localhost:9000/metrics  # → Prometheus text exposition
-```
-
 All services reachable from the host (all bound to `127.0.0.1`):
 
-| Service | URL | Notes |
-| --- | --- | --- |
-| nox-observer API | <http://localhost:9000> | `/`, `/health`, `/metrics` |
-| pgAdmin | <http://localhost:5050> | login `admin@example.com` / `admin` |
-| Postgres | `localhost:5432` | `psql "$DATABASE_URL"` |
-| MinIO (S3 API) | <http://localhost:9100> | endpoint used by the S3 resolver |
-| MinIO console | <http://localhost:9101> | login `minioadmin` / `minioadmin` |
-
+| Service                 | URL                             | Notes                                        |
+| ----------------------- | ------------------------------- | -------------------------------------------- |
+| nox-observer `/`        | <http://localhost:9000/>        | `{"service":"nox-observer","timestamp":...}` |
+| nox-observer `/health`  | <http://localhost:9000/health>  | `{"status":"ok"}`                            |
+| nox-observer `/metrics` | <http://localhost:9000/metrics> | Prometheus metrics                           |
+| pgAdmin                 | <http://localhost:5050>         | DB server config is auto-loaded              |
+| Postgres                | `localhost:5432`                | `psql "$DATABASE_URL"`                       |
+| MinIO (S3 API)          | <http://localhost:9100>         | endpoint used by the S3 resolver             |
+| MinIO console           | <http://localhost:9101>         | login `minioadmin` / `minioadmin`            |
 
 ### Connect to Postgres
 
