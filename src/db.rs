@@ -9,6 +9,17 @@ use crate::config::DatabaseConfig;
 const UPSERT_HANDLE_SQL: &str = include_str!("../sql/upsert_handle.sql");
 const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../sql/upsert_handle_parent.sql");
 const MARK_HANDLE_RESOLVED_SQL: &str = include_str!("../sql/mark_handle_resolved.sql");
+const UNRESOLVED_COUNT_SQL: &str = include_str!("../sql/unresolved_count.sql");
+
+/// Result of counting unresolved handles for a chain: how many, and the block
+/// range they span. `oldest_block`/`newest_block` are `None` when `unresolved`
+/// is 0, since `MIN`/`MAX` over zero rows return `NULL`.
+#[derive(Debug, sqlx::FromRow)]
+pub struct UnresolvedCount {
+    pub unresolved: i64,
+    pub oldest_block: Option<i64>,
+    pub newest_block: Option<i64>,
+}
 
 #[derive(Debug)]
 pub struct NewHandle {
@@ -148,6 +159,18 @@ impl Db {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
+    }
+
+    /// Counts unresolved handles for `chain_id` and reports the block range
+    /// they span (`None` for both bounds when there are none).
+    pub async fn fetch_unresolved_count(
+        &self,
+        chain_id: i32,
+    ) -> Result<UnresolvedCount, sqlx::Error> {
+        sqlx::query_as(UNRESOLVED_COUNT_SQL)
+            .bind(chain_id)
+            .fetch_one(&self.pool)
+            .await
     }
 }
 

@@ -1,4 +1,7 @@
+use axum::{Json, http::StatusCode, response::IntoResponse, response::Response};
+use serde_json::json;
 use thiserror::Error;
+use tracing::error;
 
 // ==================================
 // NATS consumer error
@@ -89,9 +92,44 @@ impl S3ResolverError {
     }
 }
 
+// ==================================
+// HTTP handler error
+// ==================================
+
+#[derive(Debug, Error)]
+pub enum ObserverError {
+    #[error("bad request: {0}")]
+    BadRequest(String),
+
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+}
+
+pub type ObserverResult<T> = Result<T, ObserverError>;
+
+impl IntoResponse for ObserverError {
+    fn into_response(self) -> Response {
+        let (status, message) = match &self {
+            Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message.clone()),
+            Self::Database(e) => {
+                error!("database error handling request: {e}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".to_string(),
+                )
+            }
+        };
+        (status, Json(json!({ "error": message }))).into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::S3ResolverError;
+    use super::{ObserverError, S3ResolverError};
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use serde_json::Value;
 
     #[test]
     fn is_transient_returns_true_when_variant_is_s3_transient() {
@@ -101,5 +139,40 @@ mod tests {
     #[test]
     fn is_transient_returns_false_when_variant_is_permanent_s3() {
         assert!(!S3ResolverError::S3("access denied".to_string()).is_transient());
+    }
+
+    #[tokio::test]
+    async fn bad_request_into_response_returns_400_with_message() {
+        let response =
+            ObserverError::BadRequest("chain_id must be a valid i32".to_string()).into_response();
+        assert_eq!(StatusCode::BAD_REQUEST, response.status());
+
+        let body = body_json(response).await;
+        assert_eq!(
+            serde_json::json!({ "error": "chain_id must be a valid i32" }),
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn database_error_into_response_returns_500_and_hides_detail() {
+        let response = ObserverError::Database(sqlx::Error::RowNotFound).into_response();
+        assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, response.status());
+
+        let body = body_json(response).await;
+        assert_eq!(
+            serde_json::json!({ "error": "internal server error" }),
+            body
+        );
+
+        // The underlying sqlx error detail must not leak to the client.
+        let error_message = body["error"].as_str().unwrap();
+        assert!(!error_message.contains("RowNotFound"));
+        assert!(!error_message.contains("no rows returned"));
+    }
+
+    async fn body_json(response: axum::response::Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
     }
 }

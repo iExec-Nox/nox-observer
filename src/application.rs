@@ -21,11 +21,18 @@ use crate::subgraph::{SubgraphClient, SubgraphPoller, SubgraphPollerSupervisor};
 #[derive(Clone)]
 pub struct AppState {
     pub metrics_handle: PrometheusHandle,
+    pub db: Db,
 }
 
 impl FromRef<AppState> for PrometheusHandle {
     fn from_ref(state: &AppState) -> Self {
         state.metrics_handle.clone()
+    }
+}
+
+impl FromRef<AppState> for Db {
+    fn from_ref(state: &AppState) -> Self {
+        state.db.clone()
     }
 }
 
@@ -97,14 +104,14 @@ impl Application {
             .context("Failed to initialize the S3 client")?;
         let s3_resolver = S3Resolver::new(
             s3_client,
-            db,
+            db.clone(),
             Duration::from_secs(config.s3.poll_interval_seconds),
             i64::from(config.s3.batch_size),
         );
 
         Ok(Self {
             config,
-            state: AppState { metrics_handle },
+            state: AppState { metrics_handle, db },
             prometheus_layer,
             subgraph_pollers,
             nats_consumer,
@@ -119,6 +126,10 @@ impl Application {
             .route("/", get(handlers::root))
             .route("/health", get(handlers::health_check))
             .route("/metrics", get(handlers::metrics))
+            .route(
+                "/v0/handles/unresolved/count",
+                get(handlers::unresolved_count),
+            )
             .fallback(handlers::not_found)
             .with_state(self.state.clone())
             .layer(TraceLayer::new_for_http())
