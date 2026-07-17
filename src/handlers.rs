@@ -41,7 +41,7 @@ fn parse_chain_id(params: &HashMap<String, String>) -> ObserverResult<i32> {
         .get("chain_id")
         .ok_or_else(|| ObserverError::BadRequest("missing query parameter: chain_id".to_string()))?
         .parse()
-        .map_err(|_| ObserverError::BadRequest("chain_id must be a valid i32".to_string()))?;
+        .map_err(|_| ObserverError::BadRequest("chain_id must be an integer".to_string()))?;
 
     if chain_id <= 0 {
         return Err(ObserverError::BadRequest(
@@ -77,7 +77,9 @@ pub struct HandleCountsResponse {
 /// handles for the given chain, split into `unresolved` (past the monitoring
 /// grace period) and `resolving` (within grace, or too fresh),
 /// plus resolved-but-not-seen-by-subgraph and the latest seen block as reference
-/// figures. `oldest_block`/`newest_block` are `null` when a bucket's `count` is 0.
+/// figures. `oldest_block`/`newest_block` are `null` when a bucket's `count` is 0
+/// or when every unresolved handle has a NULL `block_number` (e.g. NATS-path handles
+/// not yet indexed by the subgraph), since `block_number` is nullable.
 pub async fn unresolved_count(
     State(db): State<Db>,
     State(monitoring): State<MonitoringConfig>,

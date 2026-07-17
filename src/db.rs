@@ -15,7 +15,9 @@ const UNRESOLVED_COUNT_SQL: &str = include_str!("../sql/unresolved_count.sql");
 /// partitioned by the monitoring grace period into `unresolved` (past grace) and
 /// `resolving` (within grace, or not yet timestamped by the subgraph), plus two
 /// reference figures. All `COUNT`/`COUNT... FILTER` columns are never `NULL`;
-/// `MIN`/`MAX` columns are `None` when the corresponding bucket has zero rows.
+/// `MIN`/`MAX` columns are `None` when the corresponding bucket has zero rows
+/// or when every matching row has a NULL `block_number`, since `MIN`/`MAX` return
+/// `NULL` in that case too.
 #[derive(Debug, sqlx::FromRow)]
 pub struct HandleCounts {
     pub unresolved_count: i64,
