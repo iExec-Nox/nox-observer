@@ -10,6 +10,7 @@ CREATE TABLE handles (
     processed_by_subgraph BOOLEAN     NOT NULL DEFAULT FALSE,
     processed_by_s3       BOOLEAN     NOT NULL DEFAULT FALSE,
     processed_by_nats     BOOLEAN     NOT NULL DEFAULT FALSE,
+    ignored               BOOLEAN     NOT NULL DEFAULT FALSE,         -- excluded from observer metrics
 
     CONSTRAINT handle_id_format        CHECK (handle_id ~ '^0x[a-fA-F0-9]{64}$'),
     CONSTRAINT tx_hash_format          CHECK (tx_hash IS NULL OR tx_hash ~ '^0x[a-fA-F0-9]{64}$'),

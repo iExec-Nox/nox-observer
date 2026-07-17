@@ -19,6 +19,8 @@ pub struct Config {
     pub nats: NatsConfig,
     #[validate(nested)]
     pub s3: S3Config,
+    #[validate(nested)]
+    pub monitoring: MonitoringConfig,
 }
 
 /// Cross-field check: every subgraph-configured chain must have a matching S3
@@ -53,6 +55,18 @@ fn validate_chain_consistency(config: &Config) -> Result<(), ValidationError> {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+}
+
+/// Grace period applied before an unresolved handle is reported as genuinely
+/// stuck (see `sql/unresolved_count.sql`). Handles younger than the grace
+/// window are bucketed as "resolving" rather than "unresolved", since ciphertext
+/// upload can lag on-chain emission by design.
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct MonitoringConfig {
+    // Bounded (max = 1 day) so the `Utc::now() - Duration::seconds(..)` deadline in
+    // the handler cannot overflow the `u64 -> i64` cast on a misconfigured value.
+    #[validate(range(min = 1, max = 86400))]
+    pub grace_period_seconds: u64,
 }
 
 /// Subgraph poller configuration.
@@ -303,6 +317,7 @@ impl Config {
             .set_default("s3.poll_interval_seconds", 10)?
             .set_default("s3.batch_size", 1000)?
             .set_default("s3.max_concurrent_requests", 1000)?
+            .set_default("monitoring.grace_period_seconds", 600)?
             .add_source(
                 Environment::with_prefix("NOX_OBSERVER")
                     .prefix_separator("_")
@@ -419,6 +434,19 @@ mod tests {
             assert_eq!(1000, config.s3.batch_size);
             assert_eq!(1000, config.s3.max_concurrent_requests);
             assert_eq!(1, config.s3.chains.len());
+            assert_eq!(600, config.monitoring.grace_period_seconds);
+        });
+    }
+
+    #[test]
+    fn monitoring_grace_period_seconds_defaults_to_600() {
+        let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
+        vars.extend(nats_required_env());
+        vars.extend(s3_required_env());
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            config.validate().expect("should validate");
+            assert_eq!(600, config.monitoring.grace_period_seconds);
         });
     }
 
@@ -427,6 +455,10 @@ mod tests {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
             ("NOX_OBSERVER_SERVER__HOST", Some("0.0.0.0")),
             ("NOX_OBSERVER_SERVER__PORT", Some("8080")),
+            (
+                "NOX_OBSERVER_MONITORING__GRACE_PERIOD_SECONDS",
+                Some("1200"),
+            ),
         ];
         vars.extend(required_non_nats_env());
         vars.extend(nats_required_env());
@@ -436,6 +468,7 @@ mod tests {
             config.validate().expect("should validate");
             assert_eq!("0.0.0.0", config.server.host);
             assert_eq!(8080, config.server.port);
+            assert_eq!(1200, config.monitoring.grace_period_seconds);
         });
     }
 
