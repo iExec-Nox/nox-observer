@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "nox-observer-local",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "nox_observer",
+      "Username": "nox_user",
+      "SSLMode": "disable"
+    }
+  }
+}

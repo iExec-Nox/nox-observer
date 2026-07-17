@@ -4,16 +4,16 @@ services:
     container_name: nox-observer-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-nox_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nox_password}
-      POSTGRES_DB: ${POSTGRES_DB:-nox_observer}
+      POSTGRES_USER: nox_user
+      POSTGRES_PASSWORD: nox_password
+      POSTGRES_DB: nox_observer
     ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nox_user} -d ${POSTGRES_DB:-nox_observer}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -24,13 +24,16 @@ services:
     container_name: nox-observer-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
     ports:
-      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+      - "127.0.0.1:5050:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,7 +46,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "127.0.0.1:${NOX_OBSERVER_PORT:-9000}:9000"
+      - "127.0.0.1:9000:9000"
     depends_on:
       postgres:
         condition: service_healthy

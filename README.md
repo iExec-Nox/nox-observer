@@ -8,27 +8,85 @@ Rust service that observes Nox protocol flows and materializes handle state in P
 
 - Docker and Docker Compose
 
-### Start Postgres
+### Build
+
+#### Native
+
+Install Rust via [rustup](https://rustup.rs/) if not already present.
+On Linux these packages are needed:
+
+- `pkg-config` lets the build script locate the system OpenSSL installation.
+
+```bash
+# Ubuntu / Debian
+sudo apt install pkg-config
+```
+
+Then run:
+
+```bash
+cargo build
+cargo test
+```
+
+#### Docker
+
+```bash
+docker compose build
+```
+
+### Run
+
+The service requires Postgres, NATS, and an S3-compatible store. Start Postgres first, then run the service either natively or in Docker.
+
+**1. Setup the env file**
 
 ```bash
 cp .env.example .env
-docker compose up -d
 ```
 
-`sql/schema.sql` is loaded automatically the first time the volume is created (mounted into the Postgres init scripts directory).
+Fill in the required credentials for remote service (NATS, S3).
 
-To reload the schema from scratch:
+**2. Run dependency services**
 
 ```bash
-docker compose down -v
-docker compose up -d
+docker compose up -d postgres pgadmin
 ```
 
-### Connect
+`sql/schema.sql` is loaded automatically the first time the Postgres volume is created.
+
+**3a. Run natively**
+
+The `.env` defaults use docker-compose service names as hosts. For native `cargo run` some variables need to be overridden:
+
+```bash
+set -a && source .env && set +a && \
+    NOX_OBSERVER_DATABASE__HOST=localhost \
+    cargo run
+```
+
+**3b. Run in Docker**
+
+```bash
+docker compose up -d nox-observer
+```
+
+**4. Check the app is running**
+
+All services reachable from the host (all bound to `127.0.0.1`):
+
+| Service                 | URL                             | Notes                                        |
+| ----------------------- | ------------------------------- | -------------------------------------------- |
+| nox-observer `/`        | <http://localhost:9000/>        | `{"service":"nox-observer","timestamp":...}` |
+| nox-observer `/health`  | <http://localhost:9000/health>  | `{"status":"ok"}`                            |
+| nox-observer `/metrics` | <http://localhost:9000/metrics> | Prometheus metrics                           |
+| pgAdmin                 | <http://localhost:5050>         | DB server config is auto-loaded              |
+| Postgres                | `localhost:5432`                | `psql "$DATABASE_URL"`                       |
+
+### Connect to Postgres
 
 The compose stack ships a [pgAdmin](https://www.pgadmin.org/) container reachable at
 [http://localhost:5050](http://localhost:5050) (default login: `admin@example.com` / `admin`).
-Register the Postgres server inside pgAdmin with host `postgres`, port `5432`, and the credentials from your `.env`.
 
 Prefer another client? Point any Postgres GUI at the `DATABASE_URL` from your `.env`
 (default: `postgres://nox_user:nox_password@localhost:5432/nox_observer`). A few good ones: [DBeaver](https://dbeaver.io/), [TablePlus](https://tableplus.com/), [Postico](https://eggerapps.at/postico2/).
