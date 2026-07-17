@@ -47,7 +47,7 @@ cp .env.example .env
 
 Fill in the required credentials for remote service (NATS, S3).
 
-**2. Run dependecy services**
+**2. Run dependency services**
 
 ```bash
 docker compose up -d postgres pgadmin
@@ -57,7 +57,7 @@ docker compose up -d postgres pgadmin
 
 **3a. Run natively**
 
-The `.env` defaults use docker-compose service names as hosts. For native `cargo run` some variables need to be overwridden:
+The `.env` defaults use docker-compose service names as hosts. For native `cargo run` some variables need to be overridden:
 
 ```bash
 set -a && source .env && set +a && \

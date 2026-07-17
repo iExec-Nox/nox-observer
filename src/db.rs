@@ -13,7 +13,8 @@ const UNRESOLVED_COUNT_SQL: &str = include_str!("../sql/unresolved_count.sql");
 
 /// Result of counting unresolved handles for a chain: how many, and the block
 /// range they span. `oldest_block`/`newest_block` are `None` when `unresolved`
-/// is 0, since `MIN`/`MAX` over zero rows return `NULL`.
+/// is 0 — and also when every matching row has a NULL `block_number` (it is a
+/// nullable column), since `MIN`/`MAX` return `NULL` in that case too.
 #[derive(Debug, sqlx::FromRow)]
 pub struct UnresolvedCount {
     pub unresolved: i64,

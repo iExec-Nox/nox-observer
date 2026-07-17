@@ -39,7 +39,7 @@ fn parse_chain_id(params: &HashMap<String, String>) -> ObserverResult<i32> {
         .get("chain_id")
         .ok_or_else(|| ObserverError::BadRequest("missing query parameter: chain_id".to_string()))?
         .parse()
-        .map_err(|_| ObserverError::BadRequest("chain_id must be a valid i32".to_string()))?;
+        .map_err(|_| ObserverError::BadRequest("chain_id must be an integer".to_string()))?;
 
     if chain_id <= 0 {
         return Err(ObserverError::BadRequest(
@@ -53,7 +53,9 @@ fn parse_chain_id(params: &HashMap<String, String>) -> ObserverResult<i32> {
 /// `GET /v0/handles/unresolved/count?chain_id=<int>` — counts handles that
 /// have not yet been resolved for the given chain, along with the block
 /// range they span. `oldest_block`/`newest_block` are `null` when there are
-/// no unresolved handles.
+/// no unresolved handles — and also when every unresolved handle has a NULL
+/// `block_number` (e.g. NATS-path handles not yet indexed by the subgraph),
+/// since `block_number` is nullable.
 pub async fn unresolved_count(
     State(db): State<Db>,
     Query(params): Query<HashMap<String, String>>,
