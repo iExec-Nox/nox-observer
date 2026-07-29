@@ -5,7 +5,7 @@
 -- rows have a NULL block_number, which is nullable).
 -- $1 = chain_id
 -- $2 = grace deadline timestamp (now - grace_period, computed in Rust)
-SELECT COUNT(*)          AS unresolved,
+SELECT COUNT(*) AS unresolved,
        MIN(block_number) AS oldest_block,
        MAX(block_number) AS newest_block
 FROM handles
