@@ -133,6 +133,7 @@ impl Db {
             "SELECT handle_id, chain_id, block_timestamp
              FROM handles
              WHERE NOT processed_by_s3
+               AND NOT ignored
                AND chain_id = ANY($1)
              ORDER BY block_timestamp DESC NULLS FIRST
              LIMIT $2",
@@ -161,14 +162,17 @@ impl Db {
         Ok(result.rows_affected())
     }
 
-    /// Counts unresolved handles for `chain_id` and reports the block range
-    /// they span (`None` for both bounds when there are none).
+    /// Counts unresolved handles for `chain_id` that are past the monitoring
+    /// grace period (`grace_deadline`), and reports the block range they span
+    /// (`None` for both bounds when there are none).
     pub async fn fetch_unresolved_count(
         &self,
         chain_id: i32,
+        grace_deadline: DateTime<Utc>,
     ) -> Result<UnresolvedCount, sqlx::Error> {
         sqlx::query_as(UNRESOLVED_COUNT_SQL)
             .bind(chain_id)
+            .bind(grace_deadline)
             .fetch_one(&self.pool)
             .await
     }

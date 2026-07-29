@@ -6,10 +6,11 @@ use axum::{
     http::{StatusCode, Uri},
     response::IntoResponse,
 };
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use metrics_exporter_prometheus::PrometheusHandle;
 use serde_json::{Value, json};
 
+use crate::config::MonitoringConfig;
 use crate::db::Db;
 use crate::errors::{ObserverError, ObserverResult};
 
@@ -53,14 +54,17 @@ fn parse_chain_id(params: &HashMap<String, String>) -> ObserverResult<i32> {
 /// `GET /v0/handles/unresolved/count?chain_id=<int>` — counts handles that
 /// have not yet been resolved for the given chain, along with the block
 /// range they span. `oldest_block`/`newest_block` are `null` when there are
-/// no unresolved handles.
+/// no unresolved handles. Handles within the monitoring grace period are not
+/// counted, since ciphertext upload can lag on-chain emission by design.
 pub async fn unresolved_count(
     State(db): State<Db>,
+    State(monitoring): State<MonitoringConfig>,
     Query(params): Query<HashMap<String, String>>,
 ) -> ObserverResult<impl IntoResponse> {
     let chain_id = parse_chain_id(&params)?;
 
-    let count = db.fetch_unresolved_count(chain_id).await?;
+    let grace_deadline = Utc::now() - Duration::seconds(monitoring.grace_period_seconds as i64);
+    let count = db.fetch_unresolved_count(chain_id, grace_deadline).await?;
 
     Ok(Json(json!({
         "chain_id": chain_id,
