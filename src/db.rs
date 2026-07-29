@@ -143,6 +143,7 @@ impl Db {
             "SELECT handle_id, chain_id, block_timestamp
              FROM handles
              WHERE NOT processed_by_s3
+               AND NOT ignored
                AND chain_id = ANY($1)
              ORDER BY block_timestamp DESC NULLS FIRST
              LIMIT $2",
