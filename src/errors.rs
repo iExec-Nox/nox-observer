@@ -144,12 +144,12 @@ mod tests {
     #[tokio::test]
     async fn bad_request_into_response_returns_400_with_message() {
         let response =
-            ObserverError::BadRequest("chain_id must be a valid i32".to_string()).into_response();
+            ObserverError::BadRequest("chain_id must be an integer".to_string()).into_response();
         assert_eq!(StatusCode::BAD_REQUEST, response.status());
 
         let body = body_json(response).await;
         assert_eq!(
-            serde_json::json!({ "error": "chain_id must be a valid i32" }),
+            serde_json::json!({ "error": "chain_id must be an integer" }),
             body
         );
     }

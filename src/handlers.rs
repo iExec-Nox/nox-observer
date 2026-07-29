@@ -40,7 +40,7 @@ fn parse_chain_id(params: &HashMap<String, String>) -> ObserverResult<i32> {
         .get("chain_id")
         .ok_or_else(|| ObserverError::BadRequest("missing query parameter: chain_id".to_string()))?
         .parse()
-        .map_err(|_| ObserverError::BadRequest("chain_id must be a valid i32".to_string()))?;
+        .map_err(|_| ObserverError::BadRequest("chain_id must be an integer".to_string()))?;
 
     if chain_id <= 0 {
         return Err(ObserverError::BadRequest(
