@@ -15,7 +15,7 @@ ALTER TABLE handles ADD COLUMN ignored BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE handles SET ignored = TRUE WHERE resolved_at IS NULL;
 
 -- Rebuild the S3 hot-loop index to exclude ignored rows.
--- Serves the s3_resolver hot loop;.
+-- Serves the s3_resolver hot loop.
 DROP INDEX IF EXISTS idx_handles_unresolved;
 CREATE INDEX idx_handles_unresolved ON handles (block_timestamp)
   WHERE NOT processed_by_s3 AND NOT ignored;

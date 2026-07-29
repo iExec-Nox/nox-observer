@@ -7,9 +7,9 @@
 -- rows) so each bucket hits a targeted index instead of forcing a single
 -- full per-chain scan:
 --   a: unresolved/resolving buckets, served by idx_handles_active
---   r: resolved-but-not-seen-by-subgraph bucket, served by idx_handles_resolved_unseen
+--   r: resolved-but-not-seen-by-subgraph bucket, served by idx_handles_resolved_but_unseen_by_subgraph
 --   i: ignored count, still a full per-chain scan (small, cheap FILTER)
---   w: latest_seen_block watermark, served by idx_handles_chain_block
+--   w: latest_seen_block watermark, served by idx_handles_latest_chain_block
 --
 -- Partitions not-yet-resolved handles into:
 --   unresolved: past the grace period (block_timestamp < deadline)
@@ -27,19 +27,27 @@ SELECT
   i.ignored_count,
   w.latest_seen_block
 FROM
-  (SELECT
-     COUNT(*) FILTER (WHERE block_timestamp < $2) AS unresolved_count,
-     MIN(block_number) FILTER (WHERE block_timestamp < $2) AS unresolved_oldest_block,
-     MAX(block_number) FILTER (WHERE block_timestamp < $2) AS unresolved_newest_block,
-     COUNT(*) FILTER (WHERE block_timestamp >= $2 OR block_timestamp IS NULL) AS resolving_count,
-     MIN(block_number) FILTER (WHERE block_timestamp >= $2 OR block_timestamp IS NULL) AS resolving_oldest_block,
-     MAX(block_number) FILTER (WHERE block_timestamp >= $2 OR block_timestamp IS NULL) AS resolving_newest_block
-   FROM handles
-   WHERE chain_id = $1 AND resolved_at IS NULL AND NOT ignored) a,
-  (SELECT COUNT(*) AS resolved_but_not_seen_by_subgraph
-   FROM handles
-   WHERE chain_id = $1 AND resolved_at IS NOT NULL AND NOT processed_by_subgraph AND NOT ignored) r,
-  (SELECT COUNT(*) AS ignored_count
-   FROM handles WHERE chain_id = $1 AND ignored) i,
-  (SELECT MAX(block_number) AS latest_seen_block
-   FROM handles WHERE chain_id = $1) w;
+  (
+    SELECT
+      COUNT(*) FILTER (WHERE block_timestamp < $2) AS unresolved_count,
+      MIN(block_number) FILTER (WHERE block_timestamp < $2) AS unresolved_oldest_block,
+      MAX(block_number) FILTER (WHERE block_timestamp < $2) AS unresolved_newest_block,
+      COUNT(*) FILTER (WHERE block_timestamp >= $2 OR block_timestamp IS NULL) AS resolving_count,
+      MIN(block_number) FILTER (WHERE block_timestamp >= $2 OR block_timestamp IS NULL) AS resolving_oldest_block,
+      MAX(block_number) FILTER (WHERE block_timestamp >= $2 OR block_timestamp IS NULL) AS resolving_newest_block
+    FROM handles
+    WHERE chain_id = $1 AND resolved_at IS NULL AND NOT ignored
+  ) a,
+  (
+    SELECT COUNT(*) AS resolved_but_not_seen_by_subgraph
+    FROM handles
+    WHERE chain_id = $1 AND resolved_at IS NOT NULL AND NOT processed_by_subgraph AND NOT ignored
+  ) r,
+  (
+    SELECT COUNT(*) AS ignored_count
+    FROM handles WHERE chain_id = $1 AND ignored
+  ) i,
+  (
+    SELECT MAX(block_number) AS latest_seen_block
+    FROM handles WHERE chain_id = $1
+  ) w;
