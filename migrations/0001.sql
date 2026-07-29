@@ -11,16 +11,14 @@
 -- New column: excludes a handle from observer metrics and the S3 hot loop.
 ALTER TABLE handles ADD COLUMN ignored BOOLEAN NOT NULL DEFAULT FALSE;
 
--- One-time backfill of the pre-existing unresolved backlog. Marks an EXPLICIT,
--- operator-supplied list of handle_ids -- NOT every `resolved_at IS NULL` row --
--- so running this against a live system can never permanently ignore
--- freshly-ingested handles. Before running, capture the backlog and paste the
--- ids below:
---   SELECT handle_id FROM handles WHERE resolved_at IS NULL;
+-- One-time backfill of the pre-existing unresolved handles.
+-- Before running, paste the ids list it below:
 UPDATE handles SET ignored = TRUE
 WHERE handle_id IN (
-  '0x...',
-  '0x...'
+  '0x0000066eee2301a9105e5da7d6be716294cbaf21bdfb1c2b8006300cbce6e6fa',
+  '0x0000066eee230158b2b9696532102543ccb687971d8c6b8765174ccd912072d2',
+  '0x0000066eee2300bababababababababababababababababababababababababa',
+  '0x0000066eee2301b69660aba62301169484a6d10613a05a111c28fcf6beb96492'
 );
 
 -- Rebuild the S3 hot-loop index to exclude ignored rows.
