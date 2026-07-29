@@ -9,16 +9,26 @@ use crate::config::DatabaseConfig;
 const UPSERT_HANDLE_SQL: &str = include_str!("../sql/upsert_handle.sql");
 const UPSERT_HANDLE_PARENT_SQL: &str = include_str!("../sql/upsert_handle_parent.sql");
 const MARK_HANDLE_RESOLVED_SQL: &str = include_str!("../sql/mark_handle_resolved.sql");
-const UNRESOLVED_COUNT_SQL: &str = include_str!("../sql/unresolved_count.sql");
+const HANDLE_STATS_SQL: &str = include_str!("../sql/handle_stats.sql");
 
-/// Result of counting unresolved handles for a chain: how many, and the block
-/// range they span. `oldest_block`/`newest_block` are `None` when `unresolved`
-/// is 0, since `MIN`/`MAX` over zero rows return `NULL`.
+/// Result of `sql/handle_stats.sql`: not-yet-resolved handles for a chain,
+/// partitioned by the monitoring grace period into `unresolved` (past grace) and
+/// `resolving` (within grace, or not yet timestamped by the subgraph), plus two
+/// reference figures. All `COUNT`/`COUNT... FILTER` columns are never `NULL`;
+/// `MIN`/`MAX` columns are `None` when the corresponding bucket has zero rows
+/// or when every matching row has a NULL `block_number`, since `MIN`/`MAX` return
+/// `NULL` in that case too.
 #[derive(Debug, sqlx::FromRow)]
-pub struct UnresolvedCount {
-    pub unresolved: i64,
-    pub oldest_block: Option<i64>,
-    pub newest_block: Option<i64>,
+pub struct HandleStats {
+    pub unresolved_count: i64,
+    pub unresolved_oldest_block: Option<i64>,
+    pub unresolved_newest_block: Option<i64>,
+    pub resolving_count: i64,
+    pub resolving_oldest_block: Option<i64>,
+    pub resolving_newest_block: Option<i64>,
+    pub resolved_but_not_seen_by_subgraph: i64,
+    pub ignored_count: i64,
+    pub latest_seen_block: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -162,15 +172,17 @@ impl Db {
         Ok(result.rows_affected())
     }
 
-    /// Counts unresolved handles for `chain_id` that are past the monitoring
-    /// grace period (`grace_deadline`), and reports the block range they span
-    /// (`None` for both bounds when there are none).
-    pub async fn fetch_unresolved_count(
+    /// Counts not-yet-resolved handles for `chain_id`, partitioned by
+    /// `grace_deadline` into `unresolved` (past grace) and `resolving` (within
+    /// grace, or not yet timestamped), plus the resolved-but-unseen-by-subgraph
+    /// and latest-seen-block reference figures. Pass `Utc::now() - grace_period`
+    /// as `grace_deadline`.
+    pub async fn fetch_handle_stats(
         &self,
         chain_id: i32,
         grace_deadline: DateTime<Utc>,
-    ) -> Result<UnresolvedCount, sqlx::Error> {
-        sqlx::query_as(UNRESOLVED_COUNT_SQL)
+    ) -> Result<HandleStats, sqlx::Error> {
+        sqlx::query_as(HANDLE_STATS_SQL)
             .bind(chain_id)
             .bind(grace_deadline)
             .fetch_one(&self.pool)

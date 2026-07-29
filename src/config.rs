@@ -58,9 +58,9 @@ pub struct ServerConfig {
 }
 
 /// Grace period applied before an unresolved handle is reported as genuinely
-/// stuck (see `sql/unresolved_count.sql`). Handles younger than the grace
-/// window are not counted, since ciphertext upload can lag on-chain emission
-/// by design.
+/// stuck (see `sql/handle_stats.sql`). Handles younger than the grace
+/// window are bucketed as "resolving" rather than "unresolved", since ciphertext
+/// upload can lag on-chain emission by design.
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct MonitoringConfig {
     // Bounded (max = 1 day) so the `Utc::now() - Duration::seconds(..)` deadline in

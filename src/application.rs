@@ -139,10 +139,7 @@ impl Application {
             .route("/", get(handlers::root))
             .route("/health", get(handlers::health_check))
             .route("/metrics", get(handlers::metrics))
-            .route(
-                "/v0/handles/unresolved/count",
-                get(handlers::unresolved_count),
-            )
+            .route("/v0/handles/stats", get(handlers::handle_stats))
             .fallback(handlers::not_found)
             .with_state(self.state.clone())
             .layer(TraceLayer::new_for_http())
