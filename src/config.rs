@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use config_secret::EnvironmentSecretFile;
@@ -63,10 +64,23 @@ pub struct ServerConfig {
 /// upload can lag on-chain emission by design.
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct MonitoringConfig {
+    // Accepts humantime strings (`"600s"`, `"10m"`, `"12h"`).
     // Bounded (max = 1 day) so the `Utc::now() - Duration::seconds(..)` deadline in
     // the handler cannot overflow the `u64 -> i64` cast on a misconfigured value.
-    #[validate(range(min = 1, max = 86400))]
-    pub grace_period_seconds: u64,
+    #[serde(with = "humantime_serde")]
+    #[validate(custom(function = "validate_grace_period"))]
+    pub grace_period: Duration,
+}
+
+fn validate_grace_period(grace_period: &Duration) -> Result<(), ValidationError> {
+    let seconds = grace_period.as_secs();
+    // Should be between 1 minutes and 1 day
+    if (60..=86_400).contains(&seconds) {
+        Ok(())
+    } else {
+        Err(ValidationError::new("grace_period")
+            .with_message("monitoring.grace_period must be between 1 min and 24h".into()))
+    }
 }
 
 /// Subgraph poller configuration.
@@ -317,7 +331,7 @@ impl Config {
             .set_default("s3.poll_interval_seconds", 10)?
             .set_default("s3.batch_size", 1000)?
             .set_default("s3.max_concurrent_requests", 1000)?
-            .set_default("monitoring.grace_period_seconds", 600)?
+            .set_default("monitoring.grace_period", "10m")?
             .add_source(
                 Environment::with_prefix("NOX_OBSERVER")
                     .prefix_separator("_")
@@ -434,19 +448,19 @@ mod tests {
             assert_eq!(1000, config.s3.batch_size);
             assert_eq!(1000, config.s3.max_concurrent_requests);
             assert_eq!(1, config.s3.chains.len());
-            assert_eq!(600, config.monitoring.grace_period_seconds);
+            assert_eq!(Duration::from_secs(600), config.monitoring.grace_period);
         });
     }
 
     #[test]
-    fn monitoring_grace_period_seconds_defaults_to_600() {
+    fn monitoring_grace_period_defaults_to_10m() {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = required_non_nats_env().to_vec();
         vars.extend(nats_required_env());
         vars.extend(s3_required_env());
         temp_env::with_vars(vars, || {
             let config = Config::load().expect("should load");
             config.validate().expect("should validate");
-            assert_eq!(600, config.monitoring.grace_period_seconds);
+            assert_eq!(Duration::from_secs(600), config.monitoring.grace_period);
         });
     }
 
@@ -455,10 +469,7 @@ mod tests {
         let mut vars: Vec<(&'static str, Option<&'static str>)> = vec![
             ("NOX_OBSERVER_SERVER__HOST", Some("0.0.0.0")),
             ("NOX_OBSERVER_SERVER__PORT", Some("8080")),
-            (
-                "NOX_OBSERVER_MONITORING__GRACE_PERIOD_SECONDS",
-                Some("1200"),
-            ),
+            ("NOX_OBSERVER_MONITORING__GRACE_PERIOD", Some("20m")),
         ];
         vars.extend(required_non_nats_env());
         vars.extend(nats_required_env());
@@ -468,7 +479,7 @@ mod tests {
             config.validate().expect("should validate");
             assert_eq!("0.0.0.0", config.server.host);
             assert_eq!(8080, config.server.port);
-            assert_eq!(1200, config.monitoring.grace_period_seconds);
+            assert_eq!(Duration::from_secs(1200), config.monitoring.grace_period);
         });
     }
 

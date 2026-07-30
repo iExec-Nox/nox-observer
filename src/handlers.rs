@@ -87,7 +87,9 @@ pub async fn handle_stats(
 ) -> ObserverResult<impl IntoResponse> {
     let chain_id = parse_chain_id(&params)?;
 
-    let grace_deadline = Utc::now() - Duration::seconds(monitoring.grace_period_seconds as i64);
+    let grace_deadline = Utc::now()
+        - Duration::from_std(monitoring.grace_period)
+            .expect("grace_period is bounded to <= 24h, well within chrono::Duration range");
     let row = db.fetch_handle_stats(chain_id, grace_deadline).await?;
 
     Ok(Json(build_response(chain_id, row)))
