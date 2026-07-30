@@ -13,8 +13,7 @@ const UNRESOLVED_COUNT_SQL: &str = include_str!("../sql/unresolved_count.sql");
 
 /// Result of counting unresolved handles for a chain: how many, and the block
 /// range they span. `oldest_block`/`newest_block` are `None` when `unresolved`
-/// is 0 — and also when every matching row has a NULL `block_number` (it is a
-/// nullable column), since `MIN`/`MAX` return `NULL` in that case too.
+/// is 0, since `MIN`/`MAX` over zero rows return `NULL`.
 #[derive(Debug, sqlx::FromRow)]
 pub struct UnresolvedCount {
     pub unresolved: i64,
@@ -134,6 +133,7 @@ impl Db {
             "SELECT handle_id, chain_id, block_timestamp
              FROM handles
              WHERE NOT processed_by_s3
+               AND NOT ignored
                AND chain_id = ANY($1)
              ORDER BY block_timestamp DESC NULLS FIRST
              LIMIT $2",
@@ -162,14 +162,17 @@ impl Db {
         Ok(result.rows_affected())
     }
 
-    /// Counts unresolved handles for `chain_id` and reports the block range
-    /// they span (`None` for both bounds when there are none).
+    /// Counts unresolved handles for `chain_id` that are past the monitoring
+    /// grace period (`grace_deadline`), and reports the block range they span
+    /// (`None` for both bounds when there are none).
     pub async fn fetch_unresolved_count(
         &self,
         chain_id: i32,
+        grace_deadline: DateTime<Utc>,
     ) -> Result<UnresolvedCount, sqlx::Error> {
         sqlx::query_as(UNRESOLVED_COUNT_SQL)
             .bind(chain_id)
+            .bind(grace_deadline)
             .fetch_one(&self.pool)
             .await
     }

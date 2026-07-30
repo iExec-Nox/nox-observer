@@ -1,10 +1,15 @@
--- Counts unresolved handles for a chain and reports the block range they span.
--- MIN/MAX(block_number) are NULL when no rows match (COUNT(*) is 0), and also
--- when all matching rows have a NULL block_number (it is a nullable column).
+-- Counts genuinely-stuck unresolved handles for a chain: resolved_at IS NULL,
+-- not ignored, and older than the grace deadline ($2). Handles still within the
+-- grace window (or with a NULL block_timestamp, i.e. fresh NATS arrivals) are not
+-- counted. MIN/MAX(block_number) are NULL when no rows match (or when matching
+-- rows have a NULL block_number, which is nullable).
 -- $1 = chain_id
+-- $2 = grace deadline timestamp (now - grace_period, computed in Rust)
 SELECT COUNT(*) AS unresolved,
        MIN(block_number) AS oldest_block,
        MAX(block_number) AS newest_block
 FROM handles
-WHERE resolved_at IS NULL
-  AND chain_id = $1;
+WHERE chain_id = $1
+  AND resolved_at IS NULL
+  AND NOT ignored
+  AND block_timestamp < $2;
