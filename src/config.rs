@@ -74,12 +74,12 @@ pub struct MonitoringConfig {
 
 fn validate_grace_period(grace_period: &Duration) -> Result<(), ValidationError> {
     let seconds = grace_period.as_secs();
-    // Should be between 1 minutes and 1 day
+    // Should be between 1 minute and 1 day
     if (60..=86_400).contains(&seconds) {
         Ok(())
     } else {
         Err(ValidationError::new("grace_period")
-            .with_message("monitoring.grace_period must be between 1 min and 24h".into()))
+            .with_message("monitoring.grace_period must be between 1 minute and 1 day".into()))
     }
 }
 

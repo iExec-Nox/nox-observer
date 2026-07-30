@@ -9,6 +9,7 @@ RUN apk add --no-cache openssl-dev=3.5.7-r0 openssl-libs-static=3.5.7-r0
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY sql ./sql
+COPY migrations ./migrations
 # Required at compile time by the graphql_client derive macro
 COPY generated ./generated
 

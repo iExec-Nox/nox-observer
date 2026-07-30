@@ -9,7 +9,6 @@
 ALTER TABLE handles ADD COLUMN ignored BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- One-time backfill of the pre-existing unresolved handles.
--- Before running, paste the ids list it below:
 UPDATE handles SET ignored = TRUE
 WHERE handle_id IN (
   '0x0000066eee2301a9105e5da7d6be716294cbaf21bdfb1c2b8006300cbce6e6fa',

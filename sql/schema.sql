@@ -1,3 +1,5 @@
+-- TODO Move schema.sql to a migration step 0000_init.up/down.sql
+
 CREATE TABLE handles (
     handle_id             TEXT        PRIMARY KEY,                  -- 0x... (66 chars)
     chain_id              INT         NOT NULL,

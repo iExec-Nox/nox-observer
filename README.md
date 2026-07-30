@@ -90,6 +90,10 @@ All services reachable from the host (all bound to `127.0.0.1`):
 
 **Pending migrations are applied automatically on startup** using [`sqlx::migrate!`](https://docs.rs/sqlx/latest/sqlx/macro.migrate.html) before it begins serving, so a fresh DB and a normal deploy both converge to the latest schema with no extra step. sqlx embeds and validates the `migrations/` directory at compile time, tracks applied versions and their checksums in the `_sqlx_migrations` table, and holds a Postgres advisory lock during the run so multiple instances starting at once serialize instead of racing.
 
+**Migrations are immutable once applied.** Never edit a migration file after it has run anywhere (including in another environment). Sqlx verifies each applied migration's checksum on startup and will refuse to boot on a mismatch. If you need to change behavior, add a new migration instead.
+
+**Operational notes**: migrations auto-apply on *every* startup, not just the first, there is no separate migrate-then-serve gate, so a failing or slow migration blocks the service from starting at all.
+
 **Reverting and adding new migrations** can be done using [`sqlx-cli`](https://github.com/launchbadge/sqlx/tree/main/sqlx-cli). Install the CLI using `cargo install sqlx-cli`:
 
 ```bash
