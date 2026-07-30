@@ -55,6 +55,14 @@ docker compose up -d postgres pgadmin
 
 `sql/schema.sql` is loaded automatically the first time the Postgres volume is created.
 
+**2b. Apply database migrations**
+
+`sql/schema.sql` is only the baseline. Incremental schema changes live in `migrations/NNNN.sql` and must be applied on top of the baseline (on a fresh local DB and in production alike). Apply the pending files in order against the database:
+
+```bash
+psql "$DATABASE_URL" -f migrations/0001.sql
+```
+
 **3a. Run natively**
 
 The `.env` defaults use docker-compose service names as hosts. For native `cargo run` some variables need to be overridden:
