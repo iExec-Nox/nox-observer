@@ -16,8 +16,7 @@ const HANDLE_STATS_SQL: &str = include_str!("../sql/handle_stats.sql");
 /// `resolving` (within grace, or not yet timestamped by the subgraph), plus two
 /// reference figures. All `COUNT`/`COUNT... FILTER` columns are never `NULL`;
 /// `MIN`/`MAX` columns are `None` when the corresponding bucket has zero rows
-/// or when every matching row has a NULL `block_number`, since `MIN`/`MAX` return
-/// `NULL` in that case too.
+/// or when every matching row has a NULL `block_number`.
 #[derive(Debug, sqlx::FromRow)]
 pub struct HandleStats {
     pub unresolved_count: i64,

@@ -1,12 +1,9 @@
--- Upgrades from the baseline sql/schema.sql to the v0.1.0 schema.
---
+-- Upgrade from the baseline sql/schema.sql.
 -- Migration 0001:
 --    - grace-period for unresolved handles
 --    - ignored-handles support.
+--    - new indexes backing the stats query
 
--- =========================
--- ==== Table `handles` ====
--- =========================
 
 -- New column: excludes a handle from observer metrics and the S3 hot loop.
 ALTER TABLE handles ADD COLUMN ignored BOOLEAN NOT NULL DEFAULT FALSE;
