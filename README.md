@@ -54,14 +54,7 @@ docker compose up -d postgres pgadmin
 ```
 
 `sql/schema.sql` is loaded automatically the first time the Postgres volume is created.
-
-**2b. Apply database migrations**
-
-`sql/schema.sql` is only the baseline. Incremental schema changes live in `migrations/NNNN.sql` and must be applied on top of the baseline (on a fresh local DB and in production alike). Apply the pending files in order against the database:
-
-```bash
-psql "$DATABASE_URL" -f migrations/0001.sql
-```
+Pending migrations then apply automatically when the service starts — see [Database migrations](#database-migrations) below.
 
 **3a. Run natively**
 
@@ -90,6 +83,35 @@ All services reachable from the host (all bound to `127.0.0.1`):
 | nox-observer `/metrics` | <http://localhost:9000/metrics> | Prometheus metrics                           |
 | pgAdmin                 | <http://localhost:5050>         | DB server config is auto-loaded              |
 | Postgres                | `localhost:5432`                | `psql "$DATABASE_URL"`                       |
+
+### Database migrations
+
+`sql/schema.sql` is only the baseline. Incremental schema changes live in `migrations/<version>_<name>.up.sql` with a matching `.down.sql` to reverse them.
+
+**Pending migrations are applied automatically on startup** using [`sqlx::migrate!`](https://docs.rs/sqlx/latest/sqlx/macro.migrate.html) before it begins serving, so a fresh DB and a normal deploy both converge to the latest schema with no extra step. sqlx embeds and validates the `migrations/` directory at compile time, tracks applied versions and their checksums in the `_sqlx_migrations` table, and holds a Postgres advisory lock during the run so multiple instances starting at once serialize instead of racing.
+
+**Reverting and adding new migrations** can be done using [`sqlx-cli`](https://github.com/launchbadge/sqlx/tree/main/sqlx-cli). Install the CLI using `cargo install sqlx-cli`:
+
+```bash
+sqlx migrate add -r <name>   # scaffold a new <version>_<name>.up.sql / .down.sql pair
+sqlx migrate run             # apply pending migrations manually (same as startup does)
+sqlx migrate revert          # roll back the most recently applied migration (runs its .down.sql)
+```
+
+`sqlx migrate revert` undoes a single migration; repeat it to step further back.
+
+**Pointing sqlx-cli at a database**: `sqlx-cli` connects via a single `DATABASE_URL` (an env var, the `--database-url` flag, or a `.env` in the working directory).
+
+```bash
+# Local docker Postgres
+export DATABASE_URL="postgres://nox_user:nox_password@localhost:5432/nox_observer"
+sqlx migrate revert
+
+# ...or pass it inline
+sqlx migrate revert --database-url "postgres://user:pass@host:5432/dbname"
+```
+
+For a remote / production database, append `?sslmode=require` to the DB url (matches `NOX_OBSERVER_DATABASE__TLS_ENABLED=true`).
 
 ### Connect to Postgres
 

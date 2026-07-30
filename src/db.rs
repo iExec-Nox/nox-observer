@@ -76,6 +76,13 @@ impl Db {
         Ok(Self { pool })
     }
 
+    /// Borrows the underlying pool. Used by the `sqlx::migrate!` macro, which
+    /// needs to acquire its own dedicated connection to hold an advisory lock
+    /// across the whole migration run.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     pub async fn upsert_handle(&self, handle: &NewHandle) -> Result<(), sqlx::Error> {
         bind_upsert_handle(handle).execute(&self.pool).await?;
         Ok(())
