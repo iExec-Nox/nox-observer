@@ -90,9 +90,7 @@ All services reachable from the host (all bound to `127.0.0.1`):
 
 **Pending migrations are applied automatically on startup** using [`sqlx::migrate!`](https://docs.rs/sqlx/latest/sqlx/macro.migrate.html) before it begins serving, so a fresh DB and a normal deploy both converge to the latest schema with no extra step. sqlx embeds and validates the `migrations/` directory at compile time, tracks applied versions and their checksums in the `_sqlx_migrations` table, and holds a Postgres advisory lock during the run so multiple instances starting at once serialize instead of racing.
 
-**Migrations are immutable once applied.** Never edit a migration file after it has run anywhere (including in another environment). Sqlx verifies each applied migration's checksum on startup and will refuse to boot on a mismatch. If you need to change behavior, add a new migration instead.
-
-**Operational notes**: migrations auto-apply on *every* startup, not just the first, there is no separate migrate-then-serve gate, so a failing or slow migration blocks the service from starting at all.
+**Migrations are immutable once applied**, never edit a migration file after it has run anywhere (including in another environment). Sqlx verifies each applied migration's checksum on startup and will refuse to boot on a mismatch. If you need to change behavior, add a new migration instead.
 
 **Reverting and adding new migrations** can be done using [`sqlx-cli`](https://github.com/launchbadge/sqlx/tree/main/sqlx-cli). Install the CLI using `cargo install sqlx-cli`:
 
@@ -112,10 +110,16 @@ export DATABASE_URL="postgres://nox_user:nox_password@localhost:5432/nox_observe
 sqlx migrate revert
 
 # ...or pass it inline
-sqlx migrate revert --database-url "postgres://user:pass@host:5432/dbname"
+sqlx migrate revert --database-url $DATABASE_URL
 ```
 
 For a remote / production database, append `?sslmode=require` to the DB url (matches `NOX_OBSERVER_DATABASE__TLS_ENABLED=true`).
+
+**To ignore an existing handle** fill the handle list in `sql/ignore_handles.sql` and run it manually against a populated database, once those handles have been indexed:
+
+```bash
+psql "$DATABASE_URL" -f sql/ignore_handles.sql
+```
 
 ### Connect to Postgres
 

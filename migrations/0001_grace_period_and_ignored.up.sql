@@ -8,17 +8,6 @@
 -- New column: excludes a handle from observer metrics and the S3 hot loop.
 ALTER TABLE handles ADD COLUMN ignored BOOLEAN NOT NULL DEFAULT FALSE;
 
--- One-time backfill of the pre-existing unresolved handles.
--- TODO this does not work on a fresh db since the software is still indexing
--- and these handles are not in the db yet.
-UPDATE handles SET ignored = TRUE
-WHERE handle_id IN (
-  '0x0000066eee2301a9105e5da7d6be716294cbaf21bdfb1c2b8006300cbce6e6fa',
-  '0x0000066eee230158b2b9696532102543ccb687971d8c6b8765174ccd912072d2',
-  '0x0000066eee2300bababababababababababababababababababababababababa',
-  '0x0000066eee2301b69660aba62301169484a6d10613a05a111c28fcf6beb96492'
-);
-
 -- Rebuild the S3 hot-loop index to exclude ignored rows.
 -- Serves the s3_resolver hot loop.
 DROP INDEX IF EXISTS idx_handles_unresolved;
