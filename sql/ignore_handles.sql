@@ -8,7 +8,7 @@
 -- It is safe to extend the handles list without removing existing ids
 -- because the operation is idempotent.
 --
--- Usge example: `psql "$DATABASE_URL" -f sql/ignore_handles.sql`
+-- Usage example: `psql "$DATABASE_URL" -f sql/ignore_handles.sql`
 --
 
 UPDATE handles SET ignored = TRUE
