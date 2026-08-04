@@ -4,7 +4,7 @@ Deploy notes per version to centralize **config breaking changes** and **manual 
 required to move to a version. Schema migrations under `migrations/` apply automatically
 on startup.
 
-For the use facing breaking changes checks the changelog file.
+For user-facing breaking changes, check the changelog file.
 
 ## v0.1.0 - Unreleased
 
