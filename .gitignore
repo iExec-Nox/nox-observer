@@ -32,7 +32,5 @@ target
 .DS_Store
 
 # IA generated files
-CLAUDE.md
 .agents
 .claude
-skills-lock.json
