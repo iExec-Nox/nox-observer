@@ -91,6 +91,8 @@ Two cross-cutting rules:
 
 `subgraph_poller_state` — one row per chain holding the poller's `cursor_block`, so multichain deployments resume independently.
 
+> Don't be caught out by `sql/schema.sql`: the baseline still declares this table with the **pre-#15 `skip` column** (a GraphQL page offset), because that is what is deployed in production. Migration `0001` recreates the table with `cursor_block` (a block number), which is what `src/db.rs` actually queries. Read the baseline plus the migrations, never the baseline alone. The two values are not interchangeable, so `0001` resets the cursors rather than converting them — see the migration's comments.
+
 **Upsert invariant** (`sql/upsert_handle.sql`): the `ON CONFLICT` clause only fires a write when the incoming row adds new information (fills a previously-NULL column or flips a `processed_by_*` flag from false to true). This avoids WAL churn under heavy NATS redelivery / S3 polling retries. `sql/mark_handle_resolved.sql` is similarly guarded by `AND NOT h.processed_by_s3`.
 
 Queries live as `.sql` files under `sql/` and are pulled in with `include_str!` in `src/db.rs`. These are runtime-checked, not `sqlx::query!` macros — **a column rename in `sql/schema.sql` will not fail the build, it will fail at runtime.**

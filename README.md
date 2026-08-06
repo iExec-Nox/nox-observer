@@ -53,7 +53,7 @@ Fill in the required credentials for remote service (NATS, S3).
 docker compose up -d postgres pgadmin
 ```
 
-`sql/schema.sql` is loaded automatically the first time the Postgres volume is created.
+`sql/schema.sql` should be loaded the first time the Postgres volume is created.
 Pending migrations then apply automatically when the service starts — see [Database migrations](#database-migrations) below.
 
 **3a. Run natively**
