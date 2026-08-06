@@ -11,7 +11,7 @@ on startup.
 
 ### Database
 
-- Migration `0001_ignored_handles`:
+- Migration `0001_unresolved_handles_sql_function`:
   - adds `handles.ignored` and narrows the S3 hot-loop index to exclude those rows.
   - recreates `subgraph_poller_state` with `cursor_block` (block number) in place of
     `skip` (handle offset).
