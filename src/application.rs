@@ -49,6 +49,14 @@ impl Application {
             .await
             .context("Failed to connect to the database")?;
 
+        // Apply any pending migrations before serving.
+        // To revert a migration use sqlx-cli.
+        // TODO check if we should run `sqlx migrate revert` automatically on failure.
+        sqlx::migrate!("./migrations")
+            .run(db.pool())
+            .await
+            .context("Failed to run database migrations")?;
+
         let poll_interval = Duration::from_secs(config.subgraph.poll_interval_seconds);
         let batch_size = i64::from(config.subgraph.batch_size);
         let mut subgraph_pollers = Vec::with_capacity(config.subgraph.chains.len());
