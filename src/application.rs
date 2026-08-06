@@ -51,7 +51,6 @@ impl Application {
 
         // Apply any pending migrations before serving.
         // To revert a migration use sqlx-cli.
-        // TODO check if we should run `sqlx migrate revert` automatically on failure.
         sqlx::migrate!("./migrations")
             .run(db.pool())
             .await

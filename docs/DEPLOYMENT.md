@@ -15,6 +15,8 @@ on startup.
   - adds `handles.ignored` and narrows the S3 hot-loop index to exclude those rows.
   - recreates `subgraph_poller_state` with `cursor_block` (block number) in place of
     `skip` (handle offset).
+  - adds the `handles_unresolved_since(age_in_seconds integer)` function and the
+    `idx_handles_active` partial index, exposed to Hasura as a GraphQL query.
 
 ### Config
 
