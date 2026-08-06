@@ -64,17 +64,14 @@ Per-writer behavior worth knowing:
 | `GET /` | Service name + UTC timestamp |
 | `GET /health` | Liveness probe |
 | `GET /metrics` | Prometheus text format |
-| `GET /v0/handles/unresolved/count?chain_id=<int>` | `{chain_id, unresolved, oldest_block, newest_block}` — handles with `resolved_at IS NULL`, not `ignored`, and older than the monitoring grace period. Block bounds are `null` when the count is 0. |
-
-Handlers are thin and return `ObserverResult<T>`; `ObserverError` maps `BadRequest` → 400 and `Database` → 500 with the sqlx detail logged, never returned.
 
 ### Configuration
 
 Loaded from env vars prefixed `NOX_OBSERVER_`. Nested keys use double-underscore (`NOX_OBSERVER_SERVER__HOST`, `NOX_OBSERVER_S3__CHAINS__421614__BUCKET`). Secret files: `NOX_OBSERVER_<SECTION>_FILE` points to a TOML/JSON/YAML file whose keys merge under that section (e.g. `NOX_OBSERVER_DATABASE_FILE=/run/secrets/db.toml`).
 
-Sections: `server`, `subgraph`, `database`, `nats`, `s3`, `monitoring`. Everything is validated with `validator` at startup (`Config::validate` in `main.rs`) — invalid config aborts before any connection is opened.
+Sections: `server`, `subgraph`, `database`, `nats`, `s3`. Everything is validated with `validator` at startup (`Config::validate` in `main.rs`) — invalid config aborts before any connection is opened.
 
-Notable defaults: `server.host=127.0.0.1`, `server.port=9000`, `monitoring.grace_period=10m` (humantime string, bounded to 1 min – 24 h), `subgraph.poll_interval_seconds=10`, `subgraph.batch_size=1000`, `s3.poll_interval_seconds=10`, `s3.batch_size=1000`, `s3.max_concurrent_requests=1000`, `database.tls_enabled=false`.
+Notable defaults: `server.host=127.0.0.1`, `server.port=9000`, `subgraph.poll_interval_seconds=10`, `subgraph.batch_size=1000`, `s3.poll_interval_seconds=10`, `s3.batch_size=1000`, `s3.max_concurrent_requests=1000`, `database.tls_enabled=false`.
 
 Two cross-cutting rules:
 
@@ -101,15 +98,13 @@ Queries live as `.sql` files under `sql/` and are pulled in with `include_str!` 
 
 `sql/schema.sql` is the production baseline (mounted by docker-compose `initdb`, so it only runs on a fresh volume) and stays unchanged. Incremental changes live in `migrations/NNNN.sql`.
 
-**Migrations are not applied by the service** — there is no `sqlx::migrate!` call and no migration subcommand. Apply them by hand in order with `psql`, on a fresh local DB and in production alike. A fresh DB that skips `migrations/0001.sql` has no `ignored` column, and `sql/unresolved_count.sql` will fail at runtime. Down migrations don't exist yet (see `TODO.md`).
-
 ### Module layout
 
 - `main.rs` — tracing setup, rustls provider install, config load+validate, hands off to `Application`
 - `config.rs` — `Config` and its sections, with `validator` rules and defaults
 - `application.rs` — builds the router and Prometheus layer, constructs every writer, races them in `run()`, owns graceful shutdown
-- `handlers.rs` — thin route handlers; new handlers return `ObserverResult<T>`
-- `errors.rs` — one error enum per subsystem (`NatsError`, `SubgraphError`, `SubgraphPollerError`, `S3ResolverError`, `ObserverError`) plus the `IntoResponse` impl. Retry-driving variants expose `is_transient()`; extend this when adding domain errors
+- `handlers.rs` — thin route handlers
+- `errors.rs` — one error enum per subsystem (`NatsError`, `SubgraphError`, `SubgraphPollerError`, `S3ResolverError`). Retry-driving variants expose `is_transient()`; extend this when adding domain errors
 - `db.rs` — `Db` pool wrapper, `NewHandle`, and every query
 - `events.rs` — serde types for the `nox_ingestor` NATS payload; `Operator` is a tagged enum whose `wire_tag()` is the canonical `handles.operator` string and whose `emitted_handles()` lists the handles one event produces
 - `nats/` — `client.rs` (connection + state watch), `consumer.rs` (pull loop, ack policy, handle extraction)

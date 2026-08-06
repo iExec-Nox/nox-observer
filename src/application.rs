@@ -11,7 +11,7 @@ use tokio::signal;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
-use crate::config::{Config, MonitoringConfig};
+use crate::config::Config;
 use crate::db::Db;
 use crate::handlers;
 use crate::nats::{NatsClient, NatsConsumer};
@@ -21,25 +21,11 @@ use crate::subgraph::{SubgraphClient, SubgraphPoller, SubgraphPollerSupervisor};
 #[derive(Clone)]
 pub struct AppState {
     pub metrics_handle: PrometheusHandle,
-    pub db: Db,
-    pub monitoring: MonitoringConfig,
 }
 
 impl FromRef<AppState> for PrometheusHandle {
     fn from_ref(state: &AppState) -> Self {
         state.metrics_handle.clone()
-    }
-}
-
-impl FromRef<AppState> for Db {
-    fn from_ref(state: &AppState) -> Self {
-        state.db.clone()
-    }
-}
-
-impl FromRef<AppState> for MonitoringConfig {
-    fn from_ref(state: &AppState) -> Self {
-        state.monitoring.clone()
     }
 }
 
@@ -116,15 +102,9 @@ impl Application {
             i64::from(config.s3.batch_size),
         );
 
-        let monitoring = config.monitoring.clone();
-
         Ok(Self {
             config,
-            state: AppState {
-                metrics_handle,
-                db,
-                monitoring,
-            },
+            state: AppState { metrics_handle },
             prometheus_layer,
             subgraph_pollers,
             nats_consumer,
@@ -139,10 +119,6 @@ impl Application {
             .route("/", get(handlers::root))
             .route("/health", get(handlers::health_check))
             .route("/metrics", get(handlers::metrics))
-            .route(
-                "/v0/handles/unresolved/count",
-                get(handlers::unresolved_count),
-            )
             .fallback(handlers::not_found)
             .with_state(self.state.clone())
             .layer(TraceLayer::new_for_http())
