@@ -21,11 +21,18 @@ use crate::subgraph::{SubgraphClient, SubgraphPoller, SubgraphPollerSupervisor};
 #[derive(Clone)]
 pub struct AppState {
     pub metrics_handle: PrometheusHandle,
+    pub db: Db,
 }
 
 impl FromRef<AppState> for PrometheusHandle {
     fn from_ref(state: &AppState) -> Self {
         state.metrics_handle.clone()
+    }
+}
+
+impl FromRef<AppState> for Db {
+    fn from_ref(state: &AppState) -> Self {
+        state.db.clone()
     }
 }
 
@@ -104,7 +111,7 @@ impl Application {
 
         Ok(Self {
             config,
-            state: AppState { metrics_handle },
+            state: AppState { metrics_handle, db },
             prometheus_layer,
             subgraph_pollers,
             nats_consumer,
