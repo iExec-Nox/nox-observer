@@ -27,14 +27,15 @@ cargo fmt
 cp .env.example .env
 docker compose up -d postgres pgadmin
 
-# Apply migrations on top of the baseline schema (see "Schema management")
-psql "$DATABASE_URL" -f migrations/0001.sql
-
 # Reset DB schema from scratch (re-runs initdb with sql/schema.sql)
 docker compose down -v && docker compose up -d postgres pgadmin
 
-# Run natively (the .env hosts point at compose service names)
-set -a && source .env && set +a && NOX_OBSERVER_DATABASE__HOST=localhost cargo run
+# Run natively — sources .env and overrides the DB host to localhost
+./run.sh
+
+# Author / revert migrations (needs `cargo install sqlx-cli`, and DATABASE_URL set)
+sqlx migrate add -r <name>
+sqlx migrate revert
 ```
 
 Running the service needs Postgres, NATS, and an S3-compatible store. NATS and S3 are remote; fill their credentials into `.env`. `S3Client::new` HEAD-checks every configured bucket at startup, so bad S3 config fails fast.
@@ -84,11 +85,13 @@ Two cross-cutting rules:
 
 `handles` — one row per handle (primary key `handle_id`, a 66-char `0x…` hex). Tracks which writers have seen it (`processed_by_subgraph`, `processed_by_s3`, `processed_by_nats`) and when ciphertext was resolved (`resolved_at`). CHECK constraints enforce hex formats, positive `chain_id`, and `resolved_at >= block_timestamp`.
 
-`ignored` (added by `migrations/0001.sql`) excludes a row from observer metrics; it defaults to `false` for new handles, and the migration backfills a hardcoded list of pre-existing stuck handle IDs to `true` at rollout. The S3 resolver's hot loop (`fetch_unresolved_handles` in `src/db.rs`) also skips `ignored` handles, so they're never re-fetched; the partial index `idx_handles_unresolved` excludes them too.
+`ignored` (added by `migrations/0001_unresolved_handles_sql_function.up.sql`) excludes a row from the S3 resolver's hot loop — `fetch_unresolved_handles` in `src/db.rs` skips it, so it is never re-fetched, and the partial index `idx_handles_unresolved` excludes it too. It defaults to `false`. The ids to ignore are environment-specific data, so they are **not** in the migration: fill `sql/ignore_handles.sql` and run it by hand against a populated DB once those handles have been indexed (`psql "$DATABASE_URL" -f sql/ignore_handles.sql`). It is idempotent and safe to extend and re-run.
 
 `handle_parents` — junction table for parent→child handle relationships, written only by `subgraph_syncer`. Foreign keys to `handles` are deliberately **not** enforced: subgraph reindexing and sub-second blocks can produce a link before its endpoints are inserted. Queries needing handle metadata should INNER JOIN.
 
 `subgraph_poller_state` — one row per chain holding the poller's `cursor_block`, so multichain deployments resume independently.
+
+> Don't be caught out by `sql/schema.sql`: the baseline still declares this table with the **pre-#15 `skip` column** (a GraphQL page offset), because that is what is deployed in production. Migration `0001` recreates the table with `cursor_block` (a block number), which is what `src/db.rs` actually queries. Read the baseline plus the migrations, never the baseline alone. The two values are not interchangeable, so `0001` resets the cursors rather than converting them — see the migration's comments.
 
 **Upsert invariant** (`sql/upsert_handle.sql`): the `ON CONFLICT` clause only fires a write when the incoming row adds new information (fills a previously-NULL column or flips a `processed_by_*` flag from false to true). This avoids WAL churn under heavy NATS redelivery / S3 polling retries. `sql/mark_handle_resolved.sql` is similarly guarded by `AND NOT h.processed_by_s3`.
 
@@ -96,7 +99,13 @@ Queries live as `.sql` files under `sql/` and are pulled in with `include_str!` 
 
 ### Schema management
 
-`sql/schema.sql` is the production baseline (mounted by docker-compose `initdb`, so it only runs on a fresh volume) and stays unchanged. Incremental changes live in `migrations/NNNN.sql`.
+`sql/schema.sql` is the production baseline (mounted by docker-compose `initdb`, so it only runs on a fresh volume) and stays unchanged. Reversible incremental changes live as paired `migrations/<version>_<name>.up.sql` / `.down.sql` files applied on top of it. `sqlx.toml` pins `migration-versioning = "sequential"`, so versions are `0001`, `0002`, … rather than timestamps.
+
+Migrations **auto-apply on startup**, before the service serves: `sqlx::migrate!("./migrations").run(db.pool())` in `Application::new`. sqlx embeds and validates the `migrations/` directory at compile time (so a malformed migration breaks the build, not the deploy), tracks applied versions and their checksums in the `_sqlx_migrations` table, and holds a Postgres advisory lock during the run so multiple instances starting at once serialize instead of racing. `Db::pool()` exists solely to hand the migrator its own connection for that lock.
+
+**Migrations are immutable once applied anywhere.** sqlx re-verifies each applied migration's checksum on startup and refuses to boot on a mismatch — to change behavior, add a new migration. Author and revert with `sqlx-cli` (`sqlx migrate add -r <name>`, `sqlx migrate revert`); there is no `nox-observer migrate` subcommand. `sqlx-cli` reads a single `DATABASE_URL`, unlike the service's component-wise `NOX_OBSERVER_DATABASE__*` vars.
+
+One-off operator scripts that are *not* migrations (currently `sql/ignore_handles.sql`) stay in `sql/` and are run by hand; record them under "Manual steps" in `docs/DEPLOYMENT.md`, the per-version runbook for config breaking changes and manual steps.
 
 ### Module layout
 
